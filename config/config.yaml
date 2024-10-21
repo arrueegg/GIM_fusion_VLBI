@@ -25,7 +25,11 @@ training:
   batchsize: 64
   learning_rate: 0.001
   optimizer: "adam"
-  loss_function: "mean_squared_error"
+  weight_decay: 0
+  loss_function: "MSELoss" # Loss function: MSELoss, MAELoss, HuberLoss
+  scheduler: "step_lr"     # Scheduler: none, step_lr, cosine_annealing
+  scheduler_step_size: 10  # Step size for scheduler (reduces lr every X epochs)
+  scheduler_gamma: 0.5     # Gamma for scheduler (gamma ist the reduction factor lr_new = lr_old * gamma)
   early_stopping: true     # Whether to use early stopping
   patience: 5              # Patience for early stopping
 
@@ -33,6 +37,7 @@ training:
 logging:
   log_to_file: true
   log_file: "experiments/logs/training.log"
+  checkpoint_dir: "experiments/checkpoints/"
 
 # Debugging configuration
 debugging:
