@@ -1,7 +1,8 @@
-# Ignore Python cache and virtual environments
+# Ignore Python cache, virtual environments and wandb files
 */__pycache__/
 *.pyc
 env/
+wandb/
 
 # Ignore logs and temp files
 *.log

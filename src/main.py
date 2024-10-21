@@ -85,7 +85,9 @@ def main():
     config = parse_config()
     logger.info(f"Starting training for project: {config['project_name']}")
 
-    wandb.init(project=config['project_name'], config=config)
+    if not config["debugging"]["enable_debugging"]:
+        wandbname = f"Fusion {config['model']['model_type']}"
+        wandb.init(project=config['project_name'], name=wandbname, config=config)
 
     # Set up device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -118,12 +120,13 @@ def main():
             scheduler.step()  # Adjust learning rate
 
         # Log metrics to wandb
-        wandb.log({
-            'train_loss': train_loss,
-            'val_loss': val_loss,
-            'learning_rate': scheduler.get_last_lr()[0],
-            'epoch': epoch+1
-        })
+        if not config["debugging"]["enable_debugging"]:
+            wandb.log({
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'learning_rate': scheduler.get_last_lr()[0],
+                'epoch': epoch+1
+            })
 
         logger.info(f"Train Loss: {train_loss:.4f}, Validation Loss: {val_loss:.4f}")
 
@@ -140,10 +143,12 @@ def main():
 
     # Final test accuracy
     test_accuracy = test(model, test_loader, device)
-    wandb.log({'test_accuracy': test_accuracy})
+    if not config["debugging"]["enable_debugging"]:
+        wandb.log({'test_accuracy': test_accuracy})
     logger.info(f'Test Accuracy: {test_accuracy * 100:.2f}%')
 
-    wandb.finish() 
+    if not config["debugging"]["enable_debugging"]:
+        wandb.finish() 
 
 if __name__ == "__main__":
     main()

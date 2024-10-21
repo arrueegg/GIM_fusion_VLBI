@@ -7,8 +7,6 @@ random_seed: 42
 data:
   GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
-  batch_size: 64
-  test_size: 0.2          # Proportion of data to use for testing
   shuffle: true
 
 # Model configuration
@@ -21,6 +19,7 @@ model:
 
 # Training configuration
 training:
+  test_size: 0.2          # Proportion of data to use for testing
   epochs: 50
   batchsize: 64
   learning_rate: 0.001
@@ -41,8 +40,6 @@ logging:
 
 # Debugging configuration
 debugging:
-  enable_debugging: false           # Turn on debugging mode
+  enable_debugging: True           # Turn on debugging mode
   log_level: "DEBUG"               # Logging level (e.g., DEBUG, INFO)
-  log_to_console: false             # Output logs to the console
   debug_data_dir: "experiments/debug/"  # Directory for saving debug data
-  verbose_training: false           # Show detailed output during training

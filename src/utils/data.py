@@ -20,14 +20,22 @@ class GNSSVLBIDataLoader(Dataset):
         y = self.data[idx]['label']
         return x, y
 
-def get_data_loaders(data_file, batch_size, train_split=0.8, val_split=0.1, test_split=0.1, shuffle=True):
-    dataset = GNSSVLBIDataLoader(data_file)
+def get_data_loaders(config):
+    batch_size = config['training']['batch_size']
+    test_split = config['training']['test_size']
+    shuffle = config["data"]["shuffle"]
+    
+
+    dataset = GNSSVLBIDataLoader(config['data']['GNSS_data_path'])
     
     # Ensure splits sum to 1
+    train_val_split = 1 - test_split
+    train_split = 0.8 * train_val_split
+    val_split = 0.2 * train_val_split
     total_size = len(dataset)
     train_size = int(train_split * total_size)
     val_size = int(val_split * total_size)
-    test_size = total_size - train_size - val_size
+    test_size = int(test_split * total_size)
 
     # Split the dataset into train, validation, and test sets
     train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
