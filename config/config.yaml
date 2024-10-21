@@ -1,0 +1,43 @@
+# General configuration
+project_name: "GIM_fusion_VLBI"
+output_dir: "experiments/"
+random_seed: 42
+
+# Data configuration
+data:
+  GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
+  VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
+  batch_size: 64
+  test_size: 0.2          # Proportion of data to use for testing
+  shuffle: true
+
+# Model configuration
+model:
+  model_type: "MLP"
+  input_size: 128          # Input feature size
+  hidden_size: 64          # Hidden layer size
+  output_size: 1           # Output prediction size
+  dropout: 0.3             # Dropout rate for regularization
+
+# Training configuration
+training:
+  epochs: 50
+  batchsize: 64
+  learning_rate: 0.001
+  optimizer: "adam"
+  loss_function: "mean_squared_error"
+  early_stopping: true     # Whether to use early stopping
+  patience: 5              # Patience for early stopping
+
+# Logging configuration
+logging:
+  log_to_file: true
+  log_file: "experiments/logs/training.log"
+
+# Debugging configuration
+debugging:
+  enable_debugging: false           # Turn on debugging mode
+  log_level: "DEBUG"               # Logging level (e.g., DEBUG, INFO)
+  log_to_console: false             # Output logs to the console
+  debug_data_dir: "experiments/debug/"  # Directory for saving debug data
+  verbose_training: false           # Show detailed output during training
