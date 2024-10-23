@@ -96,6 +96,11 @@ def main():
     # Initialize dataloaders for train, validation, and test sets
     train_loader, val_loader, test_loader = get_data_loaders(config)
 
+    for inputs, labels in train_loader:
+        logger.info(f"Input shape: {inputs.shape}, Label shape: {labels.shape}")
+        logger.info(f"Input: {inputs}, Label dtype: {labels}")
+        break
+
     # Initialize model, criterion, optimizer
     model = get_model(config).to(device)
     criterion = get_criterion(config)
