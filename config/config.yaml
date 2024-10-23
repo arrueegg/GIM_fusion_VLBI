@@ -1,12 +1,16 @@
 # General configuration
 project_name: "GIM_fusion_VLBI"
 output_dir: "experiments/"
+year: 2023
+doy: 1
 random_seed: 42
 
 # Data configuration
 data:
   GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
+  columns_to_load:  #['station', 'stec', 'vtec', 'vtec_stddev', 'satres', 'ipplat', 'ipplon', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod'] # List of columns to load or None (no arg) for all columns
+  elevation: 15.0
   shuffle: true
 
 # Model configuration
@@ -22,6 +26,7 @@ training:
   test_size: 0.2          # Proportion of data to use for testing
   epochs: 50
   batchsize: 64
+  num_workers: 4
   learning_rate: 0.001
   optimizer: "adam"
   weight_decay: 0

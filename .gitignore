@@ -1,6 +1,7 @@
 # Ignore Python cache, virtual environments and wandb files
 */__pycache__/
 *.pyc
+launch.json
 env/
 wandb/
 

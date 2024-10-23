@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger()
 
 # Function to save model checkpoints
-def save_checkpoint(model, optimizer, epoch, val_loss, best_loss, checkpoint_dir):
+def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkpoint_dir):
     if val_loss < best_loss:
         logger.info(f"Validation loss improved from {best_loss:.4f} to {val_loss:.4f}. Saving model checkpoint.")
         torch.save({
@@ -30,7 +30,7 @@ def save_checkpoint(model, optimizer, epoch, val_loss, best_loss, checkpoint_dir
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'val_loss': val_loss,
-        }, os.path.join(checkpoint_dir, 'best_model.pth'))
+        }, os.path.join(checkpoint_dir, f'best_model_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'))
         return val_loss
     return best_loss
 
@@ -86,7 +86,7 @@ def main():
     logger.info(f"Starting training for project: {config['project_name']}")
 
     if not config["debugging"]["enable_debugging"]:
-        wandbname = f"Fusion {config['model']['model_type']}"
+        wandbname = f"Fusion {config['model']['model_type']} {config['year']}-{config['doy']}"
         wandb.init(project=config['project_name'], name=wandbname, config=config)
 
     # Set up device
@@ -131,7 +131,7 @@ def main():
         logger.info(f"Train Loss: {train_loss:.4f}, Validation Loss: {val_loss:.4f}")
 
         # Save checkpoint and early stopping logic
-        best_val_loss = save_checkpoint(model, optimizer, epoch, val_loss, best_val_loss, checkpoint_dir)
+        best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, checkpoint_dir)
 
         if val_loss >= best_val_loss:
             patience_counter += 1
