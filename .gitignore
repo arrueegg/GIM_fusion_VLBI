@@ -10,3 +10,4 @@ wandb/
 *.tmp
 
 # Ignore specific files
+experiments/

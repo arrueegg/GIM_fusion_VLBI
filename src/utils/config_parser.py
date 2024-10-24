@@ -28,6 +28,9 @@ def parse_config():
         config['model']['model_type'] = args.model_type
     if args.enable_debugging is not None:
         config['debugging']['enable_debugging'] = args.enable_debugging
+    
+    if config["training"]["loss_function"] == 'LaplaceLoss':
+        config["model"]["output_size"] = 2
 
     config['year'] = str(config['year'])
     config["doy"] = str(config['doy']).zfill(3)
