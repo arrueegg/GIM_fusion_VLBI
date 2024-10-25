@@ -4,7 +4,7 @@ import pandas as pd
 import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader, random_split
-#from utils.locationencoder.pe import SphericalHarmonics
+from utils.locationencoder.pe import SphericalHarmonics
 
 class MultiGNSSDataset(Dataset):
     def __init__(self, config, h5_files):
@@ -123,7 +123,10 @@ class SingleGNSSDataset(Dataset):
         self.elev = config['preprocessing']['elevation']  # Elevation threshold
         self.columns_to_load = config["data"]["columns_to_load"]
         self.sh_encoding = config["preprocessing"]["SH_encoding"]
-        #self.sh_encoder = SphericalHarmonics(legendre_polys=16)  # Spherical Harmonics Encoder
+        # Initialize Spherical Harmonics Encoder if required
+        if self.sh_encoding:
+            self.sh_degree = config["preprocessing"]["SH_degree"]
+            self.sh_encoder = SphericalHarmonics(legendre_polys=self.sh_degree)
         
         data_file = os.path.join(config['data']['GNSS_data_path'], str(year), str(doy), f'ccl_{year}{doy}_30_5.h5')
         self.split = split
@@ -156,15 +159,8 @@ class SingleGNSSDataset(Dataset):
         df['station'] = df['station'].apply(lambda x: x.decode('utf-8').upper() if isinstance(x, bytes) else x)
 
         if self.split != 'random':
-            if self.split == "train":
-                sta_list = np.loadtxt('./src/data_processing/sit_train.list', dtype=str)
-            if self.split == "val":
-                sta_list = np.loadtxt('./src/data_processing/sit_val.list', dtype=str)
-            if self.split == "test":
-                sta_list = np.loadtxt('./src/data_processing/sit_test.list', dtype=str)
-
-            mask = (df['station'].isin(sta_list))
-            df = df[mask]
+            sta_list = np.loadtxt(f'./src/data_processing/sit_{self.split}.list', dtype=str)
+            df = df[df['station'].isin(sta_list)]
 
         # Filter data
         mask = (abs(df['dcbs']) > 1e-3) & (abs(df['dcbr']) > 1e-3) & (df['vtec'] > 2.0) & \
@@ -181,12 +177,38 @@ class SingleGNSSDataset(Dataset):
 
         # Normalize spatial features
         df.loc[:, 'sm_lon'] = (df['sm_lon'] + 180) % 360 - 180
-        df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
-        df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
 
+        # Precompute SH embeddings if enabled
+        if self.sh_encoding:
+            latitudes = torch.tensor(df['sm_lat'].values)
+            longitudes = torch.tensor(df['sm_lon'].values)
+            lonlat = torch.stack((longitudes, latitudes), dim=-1)
+            
+            # Compute embeddings for each row and add to DataFrame
+            embeddings = self.sh_encoder(lonlat)
+            embedding_cols = pd.DataFrame(embeddings, index=df.index)
+            df = pd.concat([df, embedding_cols], axis=1)
+        else:
+            df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
+            df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
+        
         return df
-    
     def preprocess(self, row):
+        combined_features = []
+
+        if self.sh_encoding:
+            # Extend with precomputed SH embedding columns from DataFrame
+            combined_features.extend(row[-self.sh_degree**2:].tolist())  # Adjust if needed
+        else:
+            combined_features.extend([row['sm_lat'], row['sm_lon']])
+
+        # Add other features
+        other_features = np.array([row['sin_utc'], row['cos_utc'], row['sod_normalize']])
+        combined_features.extend(other_features)
+
+        return np.array(combined_features)
+
+    def preprocess_(self, row):
 
         # Initialize an empty list for the combined features
         combined_features = []
@@ -198,15 +220,14 @@ class SingleGNSSDataset(Dataset):
             lonlat = torch.stack((lon, lat), dim=-1)
             embedded_lonlat = np.array(self.sh_encoder(lonlat))  # Apply SH encoding
             combined_features.extend(embedded_lonlat.flatten())
-            # Combine positional encodings with other features
-            other_features = np.array([row['sin_utc'], row['cos_utc'], row['sod_normalize']])
         else:
-            other_features = np.array([row["sm_lat"], row["sm_lon"], row["sin_utc"], row["cos_utc"], row["sod_normalize"]])
-
+            combined_features.extend([row['sm_lat'], row['sm_lon']])
+        
+        # Add other features
+        other_features = np.array([row['sin_utc'], row['cos_utc'], row['sod_normalize']])
         combined_features.extend(other_features)
 
         return np.array(combined_features)
-
     
     def __getitem__(self, idx):
         # Use iloc for DataFrame access by index

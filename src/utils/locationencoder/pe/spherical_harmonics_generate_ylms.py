@@ -42,7 +42,7 @@ def print_function(l, m):
   print("    return " + str(calc_ylm(l, m).evalf()))
 
 # max number of Legendre Polynomials
-L = 101
+L = 20
 
 head = """\"\"\"
 analytic expressions of spherical harmonics generated with sympy file 

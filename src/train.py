@@ -45,10 +45,11 @@ def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkp
         return val_loss
     return best_loss
 
-def train(model, dataloader, criterion, optimizer, device):
+def train(config, model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    for inputs, targets in tqdm(dataloader):
+    for i, (inputs, targets) in tqdm(enumerate(dataloader), total=len(dataloader)):
+
         inputs, targets = inputs.to(device), targets.to(device)
 
         optimizer.zero_grad()  # Zero the gradients
@@ -59,6 +60,9 @@ def train(model, dataloader, criterion, optimizer, device):
         optimizer.step()  # Optimize
 
         running_loss += loss.item()
+
+        if i >= 1 and config["training"]["overfit_single_batch"]:
+            break
     
     return running_loss / len(dataloader)
 
@@ -67,15 +71,20 @@ def validate(model, dataloader, criterion, device):
     running_loss = 0.0
     running_mse = 0.0
     mseloss = nn.MSELoss()
+    
     with torch.no_grad():
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(device), targets.to(device)
             
-            outputs = model(inputs).squeeze(-1)
+            outputs = model(inputs)
+            if outputs.dim() > 1:  # Check if outputs contain VTEC and uncertainty
+                vtec_outputs = outputs[:, 0].squeeze(-1)  # Use only the VTEC part
+            else:
+                vtec_outputs = outputs.squeeze(-1)
+            outputs = outputs.squeeze(-1)
             loss = criterion(outputs, targets)
-            if outputs.size(1) == 2:
-                outputs = outputs[:, 0]
-            mse = mseloss(outputs, targets)
+            mse = mseloss(vtec_outputs, targets)
+            
             running_loss += loss.item()
             running_mse += mse.item()
     
@@ -92,9 +101,11 @@ def test(model, dataloader, device):
             inputs, targets = inputs.to(device), targets.to(device)
             
             outputs = model(inputs)
-            if outputs.size(1) == 2:
+            if outputs.dim() > 1:
                 outputs = outputs[:, 0]
+                
             outputs = outputs.squeeze(-1)
+            
             loss = criterion(outputs, targets)
             total_loss += loss.item() * targets.size(0)  # Sum loss over the batch
             total_samples += targets.size(0)
@@ -108,7 +119,7 @@ def main():
 
     setup_seed(config['random_seed'])
 
-    if not config["debugging"]["enable_debugging"]:
+    if not config["debugging"]["debug"]:
         wandbname = f"Fusion {config['model']['model_type']} {config['year']}-{config['doy']}"
         wandb.init(project=config['project_name'], name=wandbname, config=config)
 
@@ -144,16 +155,22 @@ def main():
     for epoch in range(config["training"]["epochs"]):
         logger.info(f"Epoch {epoch+1}/{config['training']['epochs']}")
         
-        train_loss = train(model, train_loader, criterion, optimizer, device)
-        val_loss, mseloss = validate(model, val_loader, criterion, device)
+        train_loss = train(config, model, train_loader, criterion, optimizer, device)
+        if not config["training"]["overfit_single_batch"]:
+            val_loss, mseloss = validate(model, val_loader, criterion, device)
+        else:
+            val_loss = best_val_loss
+            mseloss = best_val_loss
+
         if config["training"]["scheduler"] != None: 
             scheduler.step()  # Adjust learning rate
 
         # Log metrics to wandb
-        if not config["debugging"]["enable_debugging"]:
+        if not config["debugging"]["debug"]:
             wandb.log({
                 'train_loss': train_loss,
                 'val_loss': val_loss,
+                'val_MSE': mseloss,
                 'learning_rate': scheduler.get_last_lr()[0],
                 'epoch': epoch+1
             })
@@ -161,7 +178,7 @@ def main():
         logger.info(f"Train Loss: {train_loss:.2f}, Validation Loss: {val_loss:.2f}")
         logger.info(f"Validation MSE: {mseloss:.2f}")
 
-        if val_loss >= best_val_loss:
+        if val_loss > best_val_loss:
             patience_counter += 1
             if patience_counter >= early_stopping_patience:
                 logger.info("Early stopping triggered. Stopping training.")
@@ -174,11 +191,11 @@ def main():
 
     # Final test accuracy
     test_accuracy = test(model, test_loader, device)
-    if not config["debugging"]["enable_debugging"]:
+    if not config["debugging"]["debug"]:
         wandb.log({'test_MSE': test_accuracy})
     logger.info(f'Test MSE: {test_accuracy:.2f}')
 
-    if not config["debugging"]["enable_debugging"]:
+    if not config["debugging"]["debug"]:
         wandb.finish() 
 
 if __name__ == "__main__":

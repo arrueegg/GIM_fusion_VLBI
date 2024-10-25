@@ -12,7 +12,7 @@ def parse_args():
     parser.add_argument('--year', type=int, help='year of data to process')
     parser.add_argument('--doy', type=int, help='day of year of data to process')
     parser.add_argument('--model_type', type=str, help='Override model type from config')
-    parser.add_argument('--enable_debugging', type=bool, help='Override debugging setting from config')
+    parser.add_argument('--debug', type=str, help='Enable debugging mode') 
     return parser.parse_args()
 
 def parse_config():
@@ -26,12 +26,20 @@ def parse_config():
         config['doy'] = args.doy
     if args.model_type:
         config['model']['model_type'] = args.model_type
-    if args.enable_debugging is not None:
-        config['debugging']['enable_debugging'] = args.enable_debugging
+    if args.debug is not None:
+        config['debugging']['debug'] = args.debug.lower() in ["true", "1", "yes"]
     
     if config["training"]["loss_function"] == 'LaplaceLoss':
         config["model"]["output_size"] = 2
+        config["model"]["apply_softplus"] = True
 
     config['year'] = str(config['year'])
     config["doy"] = str(config['doy']).zfill(3)
+
+    # calc input_size
+    config["model"]["input_size"] = 3
+    if config["preprocessing"]["SH_encoding"]:
+        config["model"]["input_size"] += config["preprocessing"]["SH_degree"]**2 
+    else:
+        config["model"]["input_size"] += 2
     return config

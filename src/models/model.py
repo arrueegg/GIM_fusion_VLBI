@@ -2,6 +2,28 @@ import torch
 import torch.nn as nn
 from prettytable import PrettyTable
 
+def get_activation_fn(activation):
+    if activation == "tanh":
+        return nn.Tanh()
+    elif activation == "relu":
+        return nn.ReLU()
+    elif activation == "leaky_relu":
+        return nn.LeakyReLU()
+    elif activation == "sigmoid":
+        return nn.Sigmoid()
+    elif activation == "softmax":
+        return nn.Softmax(dim=1)  # Softmax requires specifying a dimension
+    elif activation == "gelu":
+        return nn.GELU()
+    elif activation == "elu":
+        return nn.ELU()
+    elif activation == "selu":
+        return nn.SELU()
+    elif activation == "swish":
+        return nn.SiLU()  # SiLU is also known as Swish
+    else:
+        raise ValueError(f"Unsupported activation function: {activation}")
+
 # Initialization function
 def init_xavier(model, activation):
     def init_weights(m):
@@ -19,7 +41,7 @@ class MLPModel(nn.Module):
         super(MLPModel, self).__init__()
         self.apply_softplus = apply_softplus
         self.dropout_prob = dropout_prob
-        self.activation_fn = getattr(nn, activation.capitalize())()  # Generalized activation function
+        self.activation_fn = get_activation_fn(activation)  # Generalized activation function
 
         # Define layers using nn.Sequential
         layers = []
