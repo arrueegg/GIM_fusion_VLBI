@@ -35,10 +35,10 @@ training:
   epochs: 50
   batchsize: 512
   num_workers: 8
-  learning_rate: 0.00001
+  learning_rate: 0.0001
   optimizer: "Adam"        # Optimizer: SGD, Adam, AdamW, RMSprop, Adagrad, Adadelta
   weight_decay: 0
-  loss_function: "LaplaceLoss"  # Loss function: MSELoss, MAELoss, HuberLoss, LaplaceLoss
+  loss_function: "LaplaceLoss"  # Loss function: MSELoss, MAELoss, HuberLoss, LaplaceLoss, GaussianNLLLoss
   scheduler: "step_lr"     # Scheduler: none, step_lr, cosine_annealing
   scheduler_step_size: 10  # Step size for scheduler (reduces lr every X epochs)
   scheduler_gamma: 0.5     # Gamma for scheduler (gamma ist the reduction factor lr_new = lr_old * gamma)

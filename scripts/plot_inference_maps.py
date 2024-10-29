@@ -85,6 +85,8 @@ def plot_epoch(vtec_data, std_data):
 
         # Show the plots
         plt.tight_layout()
+        os.makedirs("experiments/plots/", exist_ok=True)
+        plt.savefig(f"experiments/plots/VTEC_and_STD_{i}.png")
         plt.show()
 
 def main():

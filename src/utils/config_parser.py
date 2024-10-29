@@ -33,6 +33,9 @@ def parse_config():
         config["model"]["output_size"] = 2
         config["model"]["apply_softplus"] = True
 
+    if config["training"]["loss_function"] == 'GaussianNLLLoss':
+        config["model"]["output_size"] = 2
+
     config['year'] = str(config['year'])
     config["doy"] = str(config['doy']).zfill(3)
 
