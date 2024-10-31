@@ -20,25 +20,19 @@ def load_maps(args):
     vtec_data = np.load(vtec_path)
     std_data = np.load(std_path)
 
-    """n_timesteps = vtec_data.shape[0]  # Number of timestamps
-    vtec_data = vtec_data.reshape(n_timesteps, 71, 73)
-    std_data = std_data.reshape(n_timesteps, 71, 73)"""
-
     return vtec_data, std_data
 
-def plot_mean(vtec_data, std_data):
+def plot_mean(vtec_data, std_data, lat_dim, lon_dim):
 
     vtec_data = np.mean(vtec_data, axis=0)
-    #vtec_data = vtec_data[1]
     std_data = np.mean(std_data, axis=0)
-    #std_data = std_data[1]
     
     # Create subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
 
     # Latitude and longitude ranges matching the VTEC data
-    lat_range = np.linspace(-87.5, 87.5, 71)   # 71 lat points
-    lon_range = np.linspace(-180, 180, 73)     # 73 lon points
+    lat_range = np.linspace(-87.5, 87.5, lat_dim)   # 71 lat points
+    lon_range = np.linspace(-180, 180, lon_dim)     # 73 lon points
 
     # Plot VTEC data
     ax1.set_title('VTEC Map')
@@ -58,7 +52,7 @@ def plot_mean(vtec_data, std_data):
     plt.tight_layout()
     plt.show()
 
-def plot_epoch(vtec_data, std_data):
+def plot_epoch(vtec_data, std_data, lat_dim, lon_dim):
 
     for i in range(vtec_data.shape[0]):
     
@@ -66,8 +60,8 @@ def plot_epoch(vtec_data, std_data):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
 
         # Latitude and longitude ranges matching the VTEC data
-        lat_range = np.linspace(-87.5, 87.5, 71)   # 71 lat points
-        lon_range = np.linspace(-180, 180, 73)     # 73 lon points
+        lat_range = np.linspace(-87.5, 87.5, lat_dim)   # 71 lat points
+        lon_range = np.linspace(-180, 180, lon_dim)     # 73 lon points
 
         # Plot VTEC data
         ax1.set_title('VTEC Map Epoch ' + str(i))
@@ -90,12 +84,17 @@ def plot_epoch(vtec_data, std_data):
         plt.show()
 
 def main():
+
+    # Generate lat/lon grid dimensions
+    lat_dim = int((175 // 1) + 1)  
+    lon_dim = int((360 // 1) + 1)   
+
     args = parser()
 
     vtec_data, std_data = load_maps(args)
     print(vtec_data.shape)
-    plot_mean(vtec_data, std_data)
-    plot_epoch(vtec_data, std_data)
+    plot_mean(vtec_data, std_data, lat_dim, lon_dim)
+    plot_epoch(vtec_data, std_data, lat_dim, lon_dim)
 
 if __name__ == "__main__":
     main()

@@ -7,6 +7,7 @@ random_seed: 42
 
 # Data configuration
 data:
+  mode: "Fusion"    # Fusion or GNSS (only GNSS)
   GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
   columns_to_load:  #['station', 'stec', 'vtec', 'vtec_stddev', 'satres', 'ipplat', 'ipplon', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod'] # List of columns to load or None (no arg) for all columns
@@ -27,18 +28,22 @@ model:
   output_size: 1           # Output prediction size
   activation: "tanh"       # Activation function: relu, tanh, sigmoid, leaky_relu
   apply_softplus: false    # Apply softplus for positive-only outputs
-  dropout: 0.0             # Dropout rate for regularization
+  dropout: 0.2             # Dropout rate for regularization
 
 # Training configuration
 training:
   test_size: 0.2          # Proportion of data to use for testing
   epochs: 50
   batchsize: 512
+  vlbi_sampling_weight: 1.0   # Weight for VLBI data sampling relative to GNSS data. Set to 1.0 for no weighting. higher weighting means sampled more frequently
   num_workers: 8
-  learning_rate: 0.0001
+  learning_rate: 0.001
   optimizer: "Adam"        # Optimizer: SGD, Adam, AdamW, RMSprop, Adagrad, Adadelta
   weight_decay: 0
   loss_function: "LaplaceLoss"  # Loss function: MSELoss, MAELoss, HuberLoss, LaplaceLoss, GaussianNLLLoss
+  weighted_loss: true      # Whether to use weighted loss
+  gnss_loss_weight: 1.0    # GNSS loss weight
+  vlbi_loss_weight: 1.0    # VLBI loss weight
   scheduler: "step_lr"     # Scheduler: none, step_lr, cosine_annealing
   scheduler_step_size: 10  # Step size for scheduler (reduces lr every X epochs)
   scheduler_gamma: 0.5     # Gamma for scheduler (gamma ist the reduction factor lr_new = lr_old * gamma)

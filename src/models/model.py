@@ -68,7 +68,7 @@ class MLPModel(nn.Module):
         x = self.layers[-1](x)  # Output layer
 
         if self.apply_softplus:
-            x = self.softplus(x)
+            x = torch.cat((x[:, 0].unsqueeze(1), self.softplus(x[:, 1]).unsqueeze(1)), dim=1)
         
         return x
 

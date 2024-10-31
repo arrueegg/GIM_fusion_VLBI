@@ -68,10 +68,7 @@ def generate_grid(config, lat_dim, lon_dim, sod, date):
     return lonlat_tensor, time_tensor
 
 
-def inference(config, model, device):
-    # Generate lat/lon grid
-    lat_dim = int((175 // 2.5) + 1)
-    lon_dim = int((360 // 5) + 1)
+def inference(config, model, device, lat_dim=71, lon_dim=73):
 
     date = datetime.strptime(f'{config["year"]}-01-01', "%Y-%m-%d") + timedelta(days=int(config["doy"]) - 1)
     interval = 3600 #900 (15min)
@@ -91,7 +88,7 @@ def inference(config, model, device):
             outputs = model(inputs)
 
             # Extract VTEC predictions and uncertainties
-            if config['training']['loss_function'] == 'LaplaceLoss':
+            if config['training']['loss_function'] == 'LaplaceLoss' or config['training']['loss_function'] == 'GaussianNLLLoss':
                 vtec_pred, uncertainty = outputs[:, 0], outputs[:, 1]
             else:
                 vtec_pred = outputs
@@ -111,10 +108,7 @@ def inference(config, model, device):
 
     return mean_vtec_preds, uncertainties
 
-def shape_check_visual(config, model, device):
-    # Generate lat/lon grid dimensions
-    lat_dim = int((175 // 2.5) + 1)  # e.g., 71 points
-    lon_dim = int((360 // 5) + 1)    # e.g., 73 points
+def shape_check_visual(config, model, device, lat_dim, lon_dim):
 
     # Date and time steps
     date = datetime.strptime(f'{config["year"]}-01-01', "%Y-%m-%d") + timedelta(days=int(config["doy"]) - 1)
@@ -154,7 +148,7 @@ def shape_check_visual(config, model, device):
 
     return vtec_visual, uncertainty_visual
 
-def plot_mean(vtec_data, std_data):
+def plot_mean(vtec_data, std_data, lat_dim, lon_dim):
 
     vtec_data = np.mean(vtec_data, axis=0)
     #vtec_data = vtec_data[1]
@@ -165,8 +159,8 @@ def plot_mean(vtec_data, std_data):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
 
     # Latitude and longitude ranges matching the VTEC data
-    lat_range = np.linspace(-87.5, 87.5, 71)   # 71 lat points
-    lon_range = np.linspace(-180, 180, 73)     # 73 lon points
+    lat_range = np.linspace(-87.5, 87.5, lat_dim)   # 71 lat points
+    lon_range = np.linspace(-180, 180, lon_dim)     # 73 lon points
 
     # Plot VTEC data
     ax1.set_title('VTEC Map')
@@ -189,22 +183,27 @@ def plot_mean(vtec_data, std_data):
 
 
 def main():
+
+    # Generate lat/lon grid dimensions
+    lat_dim = int((175 // 1) + 1) 
+    lon_dim = int((360 // 1) + 1) 
+
     config = parse_config()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     #spherical_harmonics = SphericalHarmonics(legendre_polys=16)
     model = get_model(config).to(device)
-    model_path = os.path.join(config['logging']['checkpoint_dir'], f'best_model_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth')
+    model_path = os.path.join(config['logging']['checkpoint_dir'], f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth')
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True)['model_state_dict'])
     logger.info(f"Starting inference for year {config['year']} DOY {config['doy']}")
-    mean_vtec, uncertainty = inference(config, model, device)
+    mean_vtec, uncertainty = inference(config, model, device, lat_dim, lon_dim)
 
     # Save predictions
     np.save(f'./experiments/maps/mean_vtec_preds_{config["year"]}_{config["doy"]}.npy', mean_vtec)
     np.save(f'./experiments/maps/var_vtec_preds_{config["year"]}_{config["doy"]}.npy', uncertainty)
     logger.info("Inference completed.")
 
-    #plot_mean(mean_vtec, uncertainty)
+    #plot_mean(mean_vtec, uncertainty, lat_dim, lon_dim)
 
 if __name__ == "__main__":
     main()

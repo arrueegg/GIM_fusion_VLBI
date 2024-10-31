@@ -19,6 +19,7 @@ from utils.loss_function import get_criterion
 from utils.optimizers import get_optimizer
 from utils.config_parser import parse_config
 from utils.data import get_data_loaders
+from utils.metrics import calculate_metrics
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -34,47 +35,56 @@ def setup_seed(seed):
     
 # Function to save model checkpoints
 def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkpoint_dir):
-    if val_loss < best_loss:
-        logger.info(f"Validation loss improved from {best_loss:.2f} to {val_loss:.2f}. Saving model checkpoint.")
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'val_loss': val_loss,
-        }, os.path.join(checkpoint_dir, f'best_model_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'))
-        return val_loss
-    return best_loss
+    logger.info(f"Validation loss improved from {best_loss:.2f} to {val_loss:.2f}. Saving model checkpoint.")
+    torch.save({
+        'epoch': epoch,
+        'model_type': config['model']['model_type'],
+        'input_size': config['model']['input_size'],
+        'output_size': config['model']['output_size'],
+        'hidden_size': config['model']['hidden_size'],
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'val_loss': val_loss,
+    }, os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'))
+    return val_loss
 
 def train(config, model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    for i, (inputs, targets) in tqdm(enumerate(dataloader), total=len(dataloader)):
 
-        inputs, targets = inputs.to(device), targets.to(device)
+    all_outputs = []
+    all_targets = []
+
+    for i, (inputs, targets, tech) in tqdm(enumerate(dataloader), total=len(dataloader)):
+
+        inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
 
         optimizer.zero_grad()  # Zero the gradients
         outputs = model(inputs).squeeze(-1)  # Forward pass
-        loss = criterion(outputs, targets)  # Compute loss
+        loss = criterion(outputs, targets, tech)  # Compute loss
 
         loss.backward()  # Backward pass
         optimizer.step()  # Optimize
 
         running_loss += loss.item()
+        all_outputs.append(outputs.detach().cpu())
+        all_targets.append(targets.detach().cpu())
 
         if i >= 1 and config["training"]["overfit_single_batch"]:
             break
     
-    return running_loss / len(dataloader)
+    avg_loss = running_loss / len(dataloader)
+    return avg_loss, torch.cat(all_outputs), torch.cat(all_targets)
 
 def validate(model, dataloader, criterion, device):
     model.eval()
     running_loss = 0.0
-    running_mse = 0.0
-    mseloss = nn.MSELoss()
+    all_outputs = []
+    all_targets = []
     
     with torch.no_grad():
-        for inputs, targets in dataloader:
-            inputs, targets = inputs.to(device), targets.to(device)
+        for inputs, targets, tech in dataloader:
+            inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
             
             outputs = model(inputs)
             if outputs.dim() > 1:  # Check if outputs contain VTEC and uncertainty
@@ -82,23 +92,23 @@ def validate(model, dataloader, criterion, device):
             else:
                 vtec_outputs = outputs.squeeze(-1)
             outputs = outputs.squeeze(-1)
-            loss = criterion(outputs, targets)
-            mse = mseloss(vtec_outputs, targets)
+            loss = criterion(outputs, targets, tech)
             
             running_loss += loss.item()
-            running_mse += mse.item()
+            all_outputs.append(outputs.cpu())
+            all_targets.append(targets.cpu())
     
-    return running_loss / len(dataloader), running_mse / len(dataloader)
+    avg_loss = running_loss / len(dataloader)
+    return avg_loss, torch.cat(all_outputs), torch.cat(all_targets)
 
 def test(model, dataloader, device):
     model.eval()
-    total_loss = 0
-    total_samples = 0
-    criterion = torch.nn.MSELoss()  # You can also use MAE or other regression loss functions
+    all_outputs = []
+    all_targets = []
 
     with torch.no_grad():
-        for inputs, targets in dataloader:
-            inputs, targets = inputs.to(device), targets.to(device)
+        for inputs, targets, tech in dataloader:
+            inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
             
             outputs = model(inputs)
             if outputs.dim() > 1:
@@ -106,12 +116,10 @@ def test(model, dataloader, device):
                 
             outputs = outputs.squeeze(-1)
             
-            loss = criterion(outputs, targets)
-            total_loss += loss.item() * targets.size(0)  # Sum loss over the batch
-            total_samples += targets.size(0)
+            all_outputs.append(outputs.cpu())
+            all_targets.append(targets.cpu())
     
-    mean_loss = total_loss / total_samples
-    return mean_loss
+    return torch.cat(all_outputs), torch.cat(all_targets)
 
 def main():
     config = parse_config()
@@ -120,7 +128,7 @@ def main():
     setup_seed(config['random_seed'])
 
     if not config["debugging"]["debug"]:
-        wandbname = f"Fusion {config['model']['model_type']} {config['year']}-{config['doy']}"
+        wandbname = f"{config['data']['mode']} {config['model']['model_type']} {config['year']}-{config['doy']}"
         wandb.init(project=config['project_name'], name=wandbname, config=config)
 
     # Set up device
@@ -131,9 +139,9 @@ def main():
     # Initialize dataloaders for train, validation, and test sets
     train_loader, val_loader, test_loader = get_data_loaders(config)
 
-    for x, y in train_loader:
-        logger.info(f"Shape of x: {x.shape}, Shape of y: {y.shape}")
-        logger.info(f"x: {x[0]}, y: {y[0]}")
+    for x, y, tech in train_loader:
+        logger.info(f"Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
+        logger.info(f"x: {x[0]}, y: {y[0]}, tech: {tech[0]}")
         break
 
     # Initialize model, criterion, optimizer
@@ -142,10 +150,10 @@ def main():
     criterion = get_criterion(config)
     optimizer = get_optimizer(config, model.parameters())
     if config["training"]["scheduler"] != None:
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config["training"]["scheduler_step_size"], gamma=config["training"]["scheduler_gamma"])
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config["training"]["scheduler_step_size"],
+                                                     gamma=config["training"]["scheduler_gamma"])
 
     # Early stopping and checkpoint setup
-    early_stopping_patience = config["training"]["patience"]
     checkpoint_dir = config["logging"]["checkpoint_dir"]
     os.makedirs(checkpoint_dir, exist_ok=True)
     best_val_loss = float('inf')
@@ -155,45 +163,48 @@ def main():
     for epoch in range(config["training"]["epochs"]):
         logger.info(f"Epoch {epoch+1}/{config['training']['epochs']}")
         
-        train_loss = train(config, model, train_loader, criterion, optimizer, device)
+        train_loss, train_outputs, train_targets = train(config, model, train_loader, criterion, optimizer, device)
         if not config["training"]["overfit_single_batch"]:
-            val_loss, mseloss = validate(model, val_loader, criterion, device)
+            val_loss, val_outputs, val_targets = validate(model, val_loader, criterion, device)
         else:
             val_loss = best_val_loss
-            mseloss = best_val_loss
 
-        if config["training"]["scheduler"] != None: 
-            scheduler.step()  # Adjust learning rate
-
-        # Log metrics to wandb
+        # Calculate and log metrics
         if not config["debugging"]["debug"]:
             wandb.log({
                 'train_loss': train_loss,
                 'val_loss': val_loss,
-                'val_MSE': mseloss,
                 'learning_rate': scheduler.get_last_lr()[0],
-                'epoch': epoch+1
+                **calculate_metrics(train_outputs, train_targets, prefix="train"),
+                **calculate_metrics(val_outputs, val_targets, prefix="val"),
+                'epoch': epoch + 1
             })
 
-        logger.info(f"Train Loss: {train_loss:.2f}, Validation Loss: {val_loss:.2f}")
-        logger.info(f"Validation MSE: {mseloss:.2f}")
+        if config["training"]["scheduler"] != None: 
+            scheduler.step()  # Adjust learning rate
 
-        if val_loss > best_val_loss:
+        logger.info(f"Train Loss: {train_loss:.2f}, Validation Loss: {val_loss:.2f}")
+
+        if val_loss < best_val_loss:
+            patience_counter = 0
+            best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, checkpoint_dir)
+        else:
             patience_counter += 1
-            if patience_counter >= early_stopping_patience:
+            if patience_counter >= config["training"]["patience"]:
                 logger.info("Early stopping triggered. Stopping training.")
                 break
-        else:
-            patience_counter = 0
 
-        # Save checkpoint and early stopping logic
-        best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, checkpoint_dir)
+    # Load best model for final testing
+    checkpoint = torch.load(os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'), weights_only=True)
+    model.load_state_dict(checkpoint['model_state_dict'])
 
     # Final test accuracy
-    test_accuracy = test(model, test_loader, device)
+    test_outputs, test_targets = test(model, test_loader, device)
+    test_metrics = calculate_metrics(test_outputs, test_targets, prefix="test")
     if not config["debugging"]["debug"]:
-        wandb.log({'test_MSE': test_accuracy})
-    logger.info(f'Test MSE: {test_accuracy:.2f}')
+        wandb.log(test_metrics)
+    formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
+    logger.info(f'Test metrics: {formatted_test_metrics}')
 
     if not config["debugging"]["debug"]:
         wandb.finish() 

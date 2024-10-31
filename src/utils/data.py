@@ -3,117 +3,12 @@ import h5py
 import pandas as pd
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader, random_split
+from io import StringIO
+from datetime import datetime, timedelta
+from spacepy.coordinates import Coords
+from spacepy.time import Ticktock
+from torch.utils.data import Dataset, DataLoader, random_split, WeightedRandomSampler
 from utils.locationencoder.pe import SphericalHarmonics
-
-class MultiGNSSDataset(Dataset):
-    def __init__(self, config, h5_files):
-        self.h5_files = h5_files  # List of paths to HDF5 files
-        self.columns_to_load = config["data"]["columns_to_load"]
-        self.file_data_index = self._create_file_data_index()
-        self.sh_encoder = SphericalHarmonics(legendre_polys=16)  # Spherical Harmonics Encoder
-
-    def _create_file_data_index(self):
-        """Create an index to keep track of the start and end index of data in each file."""
-        file_data_index = []
-        total_data_count = 0
-        for file in self.h5_files:
-            with h5py.File(file, 'r') as h5_file:
-                file_size = len(h5_file[self.columns_to_load[0]])  # Assuming all columns have the same length
-                file_data_index.append((file, total_data_count, total_data_count + file_size))
-                total_data_count += file_size
-        return file_data_index
-
-    def _find_file_and_index(self, idx):
-        """Find which file and index corresponds to a global dataset index."""
-        for file, start_idx, end_idx in self.file_data_index:
-            if start_idx <= idx < end_idx:
-                return file, idx - start_idx
-        raise IndexError(f"Index {idx} is out of bounds.")
-
-    def __len__(self):
-        return sum([end - start for _, start, end in self.file_data_index])
-
-    def __getitem__(self, idx):
-        # Find the correct file and the local index in that file
-        file, local_idx = self._find_file_and_index(idx)
-        
-        # Load only the required row from the appropriate file
-        with h5py.File(file, 'r') as h5_file:
-            data_row = {col: h5_file[col][local_idx] for col in self.columns_to_load}
-            df_row = pd.DataFrame(data_row, index=[0])
-            df_row = self.preprocess(df_row)  # Preprocess just this row
-            x = df_row[['sm_lat', 'sm_lon', 'sod']].values.flatten()
-            y = df_row['vtec'].values[0]
-            return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
-
-    def preprocess(self, df_row):
-        # Apply the preprocessing logic here
-        pass
-
-class SingleGNSSDataset_test(Dataset):
-    def __init__(self, config):
-        # Store file path and column info for lazy loading
-        year = config['year']
-        doy = config['doy']
-        self.elev = config['data']['elevation']  # Elevation threshold
-        self.columns_to_load = config["data"]["columns_to_load"]
-        self.sh_encoder = SphericalHarmonics(legendre_polys=16)  # Spherical Harmonics Encoder
-        
-        self.data_file = os.path.join(config['data']['GNSS_data_path'], str(year), str(doy), f'ccl_{year}{doy}_30_5.h5')
-        
-        # Get dataset size without loading the whole data
-        with h5py.File(self.data_file, 'r') as h5_file:
-            # If no specific columns are provided, load all columns
-            if self.columns_to_load is None:
-                self.columns_to_load = list(h5_file.keys())  # Load all column names
-            self.dataset_size = len(h5_file[self.columns_to_load[0]])  # Assuming all columns have the same size
-    
-    def __len__(self):
-        return self.dataset_size
-
-    def __getitem__(self, idx):
-        # Load the required row from the file on-demand
-        with h5py.File(self.data_file, 'r') as h5_file:
-            data_row = {col: h5_file[col][idx] for col in self.columns_to_load}
-            df_row = pd.DataFrame(data_row, index=[0])
-
-        # Preprocess the data row
-        features = self.preprocess(df_row)
-                
-        # Convert to tensor
-        x = torch.tensor(features, dtype=torch.float32)
-        y = torch.tensor(df_row['vtec'].values[0], dtype=torch.float32)
-        
-        return x, y
-
-    
-    def preprocess_item(self, df):
-
-        df.loc[:, 'sin_utc'] = np.sin(df['sod'] / 86400 * 2 * np.pi)
-        df.loc[:, 'cos_utc'] = np.cos(df['sod'] / 86400 * 2 * np.pi)
-        df.loc[:, 'sod_normalize'] = 2 * df['sod'] / 86400 - 1
-
-        df.loc[:, 'sm_lon'] = (df['sm_lon'] + 180) % 360 - 180
-        df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
-        df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
-
-        lat = torch.tensor(df['sm_lat'].values)
-        lon = torch.tensor(df['sm_lon'].values)
-        lonlat = torch.stack((lon, lat), dim=-1)
-        embedded_lonlat = np.array(self.sh_encoder(lonlat))
-
-        # Extract other features (e.g., sin_utc, cos_utc, sod_normalize)
-        other_features = df[['sin_utc', 'cos_utc', 'sod_normalize']].values
-
-        # Combine positional encodings with other features
-        combined_features = np.hstack((embedded_lonlat, other_features))
-
-        #for i in range(embedded_lonlat.shape[1]):
-        #    df[f'embedded_lonlat_{i}'] = embedded_lonlat[:, i]
-        
-        return combined_features
-
 
 class SingleGNSSDataset(Dataset):
     def __init__(self, config, split='random'):
@@ -192,7 +87,17 @@ class SingleGNSSDataset(Dataset):
             df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
             df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
         
-        return df
+        #return df
+        columns_to_keep = ['vtec']
+    
+        if self.sh_encoding:
+            columns_to_keep.extend(df.columns[-self.sh_degree**2:])  # SH embedding columns
+        else:
+            columns_to_keep.extend(['sm_lat', 'sm_lon'])  # `sm_lat` and `sm_lon` if not using SH
+
+        columns_to_keep.extend(['sin_utc', 'cos_utc', 'sod_normalize'])
+        return df[columns_to_keep].copy()
+    
     def preprocess(self, row):
         combined_features = []
 
@@ -208,42 +113,232 @@ class SingleGNSSDataset(Dataset):
 
         return np.array(combined_features)
 
-    def preprocess_(self, row):
-
-        # Initialize an empty list for the combined features
-        combined_features = []
-
-        # Spherical Harmonic Positional Encoding (only if SH_encoding is true in the config)
-        if self.sh_encoding:
-            lat = torch.tensor([row['sm_lat']])
-            lon = torch.tensor([row['sm_lon']])
-            lonlat = torch.stack((lon, lat), dim=-1)
-            embedded_lonlat = np.array(self.sh_encoder(lonlat))  # Apply SH encoding
-            combined_features.extend(embedded_lonlat.flatten())
-        else:
-            combined_features.extend([row['sm_lat'], row['sm_lon']])
-        
-        # Add other features
-        other_features = np.array([row['sin_utc'], row['cos_utc'], row['sod_normalize']])
-        combined_features.extend(other_features)
-
-        return np.array(combined_features)
-    
     def __getitem__(self, idx):
         # Use iloc for DataFrame access by index
         row = self.data.iloc[idx]
         
-        features = self.preprocess(row)
-        x = torch.tensor(features, dtype=torch.float32)
+        #features = self.preprocess(row)
+        #x = torch.tensor(features, dtype=torch.float32)
+        x = torch.tensor(row.drop('vtec').values, dtype=torch.float32)
         y = torch.tensor(row['vtec'], dtype=torch.float32)
-        return x, y
+
+        tech = torch.tensor(-1, dtype=torch.int64)  # -1 indicates no specific technique
+
+        return x, y, tech
     
+class SingleVLBIDataset(Dataset):
+    def __init__(self, config, split='random'):
+        # Load and preprocess your data here
+        self.year = config['year']
+        self.doy = config['doy']
+        self.vlbi_path = config['data']['VLBI_data_path']
+        self.sh_encoding = config["preprocessing"]["SH_encoding"]
+        # Initialize Spherical Harmonics Encoder if required
+        if self.sh_encoding:
+            self.sh_degree = config["preprocessing"]["SH_degree"]
+            self.sh_encoder = SphericalHarmonics(legendre_polys=self.sh_degree)
 
+        data_files = self.get_file_path(config)
+        self.split = split
+        self.data = self.load_data(data_files)
+    
+    def __len__(self):
+        return len(self.data)
 
-def get_data_loaders(config):
-    batch_size = config['training']['batchsize']
+    def get_file_path(self, config):
+        
+        date1 = datetime(int(self.year), 1, 1) + timedelta(days=int(self.doy) - 1)
+        date2 = date1 - timedelta(days=1)
+        name1 = date1.strftime('%y%b%d').upper()
+        name2 = date2.strftime('%y%b%d').upper()
+        vlbi_path = os.path.join(config["data"]["VLBI_data_path"], "VLBI", f"{self.year}")
+        vgos_path = os.path.join(config["data"]["VLBI_data_path"], "VGOS", f"{self.year}")
+
+        paths = []
+        for _, dirs, _ in os.walk(vlbi_path):
+            for dir_name in dirs:
+                if dir_name.startswith(name1) or dir_name.startswith(name2): 
+                    paths.append(os.path.join(vlbi_path, dir_name, dir_name+'.txt'))  
+        
+        for _, dirs, _ in os.walk(vgos_path):
+            for dir_name in dirs:
+                if dir_name.startswith(name1) or dir_name.startswith(name2):  
+                    paths.append(os.path.join(vgos_path, dir_name, dir_name+'.txt'))
+
+        return paths
+
+    def load_data(self, data_files):
+        data = pd.DataFrame()
+        data_list = [self.load_txt(file) for file in data_files]
+        data = pd.concat(data_list, ignore_index=True)
+
+        data = self.preprocess(data)
+        return data
+
+    def load_txt(self, path):
+        """
+        Load a text file of session results and process its contents into separate DataFrames.
+
+        Parameters:
+            path (str): The path to the directory containing the text file.
+
+        Returns:
+            dict: A dictionary containing DataFrames for each table in the text file.
+                - 'df_vtecs' (DataFrame): DataFrame for the 'vtecs' table.
+                - 'df_biases' (DataFrame): DataFrame for the 'biases' table.
+                - 'df_gradients' (DataFrame): DataFrame for the 'gradients' table.
+                - 'df_instr_offsets' (DataFrame): DataFrame for the 'instr_offsets' table.
+        """
+        # Read the text file
+        with open(path, 'r') as file:
+            data = file.read()
+
+        # Split the text into tables based on empty lines
+        tables = data.split('\n\n')
+
+        # Define column names for each table
+        column_names = [
+            ['station', 'date', 'epoch', 'vgos_vtec', 'v_vtec_sigma', 'gims_vtec', 'madr_vtec'],
+            ['station', 'bias w.r.t. GIMs', 'bias w.r.t. SMTMs'],
+            ['station', 'date', 'Gn', 'Gn_sigma', 'Gs', 'Gs_sigma'],
+            ['station', 'date', 'instr_offset', 'io_sigma']
+        ]
+
+        df_names = ['vtecs', 'biases', 'gradients', 'instr_offsets']
+
+        dfs = {}
+        # Process each table
+        for i, table in enumerate(tables):
+            # Skip empty tables
+            if not table.strip():
+                continue
+            
+            # Use StringIO to simulate a file for pandas
+            table_data = StringIO(table)
+            
+            # Read the table as a DataFrame with predefined column names
+            df = pd.read_csv(table_data, sep='\s+', skipinitialspace=True, names=column_names[i], skiprows=1)
+
+            # Store the DataFrame in the dictionary with a meaningful key
+            dfs[f'df_{df_names[i]}'] = df
+
+        return dfs['df_vtecs']
+
+    def preprocess(self, df):
+        if self.split != 'random':
+            sta_list = np.loadtxt(f'./src/data_processing/sit_{self.split}_vlbi.list', dtype=str)
+            df = df[df['station'].isin(sta_list)]
+
+        # Filter data
+        df['date'] = pd.to_datetime(df['date'], format='%Y/%m/%d')
+        df['doy'] = df['date'].dt.dayofyear
+        mask = df['doy'] == int(self.doy) 
+        df = df[mask]
+
+        sta_coords = pd.read_json(os.path.join(self.vlbi_path, "station_coords.json"))
+        
+        df['Latitude'] = df['station'].map(lambda x: sta_coords.get(x, {}).get('Latitude'))
+        df['Longitude'] = df['station'].map(lambda x: sta_coords.get(x, {}).get('Longitude'))
+
+        lats = df['Latitude'].values
+        lons = df['Longitude'].values
+        coords = np.column_stack((np.full_like(lats, 1 + 450 / 6371), lats, lons))
+        # Convert 'date' to string and 'epoch' to a datetime object
+        epochs = list(pd.to_datetime(df['date'].astype(str) + ' ' + df['epoch'].astype(str)).dt.strftime('%Y-%m-%d %H:%M:%S'))
+        
+        coord_sm = self.coord_transform(coords, epochs, "GEO", "SM")  
+        sm_lats = coord_sm.lati.astype(np.float32)
+        sm_lons = coord_sm.long.astype(np.float32)
+
+        df['sm_lat'] = np.clip(sm_lats, -90, 90)
+        df['sm_lon'] = ((sm_lons + 180) % 360) - 180
+
+        times = pd.to_datetime(df['epoch'], format='%H:%M:%S')
+        df['sod'] = times.dt.hour * 3600 + times.dt.minute * 60 + times.dt.second
+
+        df.rename(columns={'vgos_vtec': 'vtec'}, inplace=True)
+
+        # Filter data
+        mask = (df['vtec'] > 2.0) & (df['vtec'] <= 200)
+        df = df[mask]
+        
+        # Handle empty dataframe case
+        if df.empty:
+            raise ValueError("DataFrame is empty after filtering, check your filtering conditions or data.")
+
+        df.loc[:, 'sin_utc'] = np.sin(df['sod'] / 86400 * 2 * np.pi)
+        df.loc[:, 'cos_utc'] = np.cos(df['sod'] / 86400 * 2 * np.pi)
+        df.loc[:, 'sod_normalize'] = 2 * df['sod'] / 86400 - 1
+
+        # Precompute SH embeddings if enabled
+        if self.sh_encoding:
+            latitudes = torch.tensor(df['sm_lat'].values)
+            longitudes = torch.tensor(df['sm_lon'].values)
+            lonlat = torch.stack((longitudes, latitudes), dim=-1)
+            
+            # Compute embeddings for each row and add to DataFrame
+            embeddings = self.sh_encoder(lonlat)
+            embedding_cols = pd.DataFrame(embeddings, index=df.index)
+            df = pd.concat([df, embedding_cols], axis=1)
+        else:
+            df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
+            df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
+        
+        columns_to_keep = ['vtec']
+    
+        if self.sh_encoding:
+            columns_to_keep.extend(df.columns[-self.sh_degree**2:])  # SH embedding columns
+        else:
+            columns_to_keep.extend(['sm_lat', 'sm_lon'])  # `sm_lat` and `sm_lon` if not using SH
+
+        columns_to_keep.extend(['sin_utc', 'cos_utc', 'sod_normalize'])
+        return df[columns_to_keep].copy()
+        
+    def coord_transform(self, coords, epochs, inp_type, out_type):
+        coord_inp = Coords(coords, inp_type, 'sph')
+        coord_inp.ticks = Ticktock(epochs, 'UTC')
+        return coord_inp.convert(out_type, 'sph')
+
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+
+        x = torch.tensor(row.drop('vtec').values, dtype=torch.float32)
+        y = torch.tensor(row['vtec'], dtype=torch.float32)
+        
+        tech = torch.tensor(-1, dtype=torch.int64)  # -1 indicates no specific technique
+
+        return x, y, tech
+    
+class FusionDataset(Dataset):
+    def __init__(self, gnss_dataset, vlbi_dataset):
+        self.gnss_dataset = gnss_dataset
+        self.vlbi_dataset = vlbi_dataset
+        self.data = self.combine()
+
+    def __len__(self):
+        return len(self.data)
+
+    def combine(self):
+        # Add "technique" column to each dataset before concatenation
+        self.gnss_dataset.data['technique'] = 0  # GNSS encoded as 0
+        self.vlbi_dataset.data['technique'] = 1  # VLBI encoded as 1
+
+        # Concatenate GNSS and VLBI data as DataFrames
+        combined_df = pd.concat([self.gnss_dataset.data, self.vlbi_dataset.data], ignore_index=True)
+
+        # Convert the DataFrame to a torch tensor
+        combined_tensor = torch.tensor(combined_df.values, dtype=torch.float32)
+        return combined_tensor
+
+    def __getitem__(self, idx):
+        # Split features and label from the combined tensor
+        tech = self.data[idx, -1]
+        x = self.data[idx, 1:-1]  # All columns except the last one as features
+        y = self.data[idx, 0]   # Last column as the label
+        return x, y, tech
+
+def get_GNSS_data(config):
     test_split = config['training']['test_size']
-    shuffle = config["data"]["shuffle"]
     
     if config["preprocessing"]["split"] == 'lists':
         train_dataset = SingleGNSSDataset(config, split='train')
@@ -262,9 +357,45 @@ def get_data_loaders(config):
 
         # Split the dataset into train, validation, and test sets
         train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
+    
+    return train_dataset, val_dataset, test_dataset
 
-    # Create dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=config["training"]["num_workers"])
+def get_VLBI_data(config):
+    
+    train_dataset = SingleVLBIDataset(config, split="train")
+    val_dataset = SingleVLBIDataset(config, split="val")
+    test_dataset = SingleVLBIDataset(config, split="test")
+
+    return train_dataset, val_dataset, test_dataset
+
+def get_data_loaders(config):
+    batch_size = config['training']['batchsize']
+    shuffle = config["data"]["shuffle"]
+
+    if config["data"]["mode"] == "GNSS":
+        train_dataset, val_dataset, test_dataset = get_GNSS_data(config)
+    
+    elif config["data"]["mode"] == "Fusion":
+        train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
+        train_vlbi, val_vlbi, test_vlbi = get_VLBI_data(config)
+        
+        train_dataset = FusionDataset(train_gnss, train_vlbi)
+        val_dataset = FusionDataset(val_gnss, val_vlbi)
+        test_dataset = FusionDataset(test_gnss, test_vlbi)
+
+    if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
+        # Assuming `train_dataset.data` is a tensor and the last column is the "technique" indicator
+        technique_column = train_dataset.data[:, -1]  # Extract the technique column
+        # Create weights: 1.0 for VLBI (technique == 1), 0.005 for GNSS (technique == 0)
+        weights = torch.where(technique_column == 1, config["training"]["vlbi_sampling_weight"], 1.0)
+        sampler = WeightedRandomSampler(weights, len(weights))
+
+        # Create dataloaders
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=sampler, num_workers=config["training"]["num_workers"])
+    else:
+        # Create dataloaders
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=config["training"]["num_workers"])
+    
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=config["training"]["num_workers"])
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=config["training"]["num_workers"])
     
