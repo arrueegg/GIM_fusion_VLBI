@@ -226,8 +226,12 @@ class SingleVLBIDataset(Dataset):
 
     def preprocess(self, df):
         if self.split != 'random':
-            sta_list = np.loadtxt(f'./src/data_processing/sit_{self.split}_vlbi.list', dtype=str)
+            sta_list = np.atleast_1d(np.loadtxt(f'./src/data_processing/sit_{self.split}_vlbi.list', dtype=str))
             df = df[df['station'].isin(sta_list)]
+
+        # Handle empty dataframe case
+        if df.empty:
+            return df
 
         # Filter data
         df['date'] = pd.to_datetime(df['date'], format='%Y/%m/%d')
@@ -264,7 +268,7 @@ class SingleVLBIDataset(Dataset):
         
         # Handle empty dataframe case
         if df.empty:
-            raise ValueError("DataFrame is empty after filtering, check your filtering conditions or data.")
+            return df
 
         df.loc[:, 'sin_utc'] = np.sin(df['sod'] / 86400 * 2 * np.pi)
         df.loc[:, 'cos_utc'] = np.cos(df['sod'] / 86400 * 2 * np.pi)
@@ -323,6 +327,10 @@ class FusionDataset(Dataset):
         self.gnss_dataset.data['technique'] = 0  # GNSS encoded as 0
         self.vlbi_dataset.data['technique'] = 1  # VLBI encoded as 1
 
+        if self.vlbi_dataset.data.empty:
+            gnss_tensor = torch.tensor(self.gnss_dataset.data.values, dtype=torch.float32)
+            return gnss_tensor
+        
         # Concatenate GNSS and VLBI data as DataFrames
         combined_df = pd.concat([self.gnss_dataset.data, self.vlbi_dataset.data], ignore_index=True)
 
