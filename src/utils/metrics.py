@@ -32,22 +32,29 @@ def calculate_metrics(predictions, targets, techs, prefix):
         tech_targets = targets[tech_mask]
 
         if tech_predictions.numel() > 0:  # Check if there are any samples for this tech
+            if tech_predictions.dim() > 1 and tech_predictions.shape[1] > 1:
+                vtec_predictions = tech_predictions[:, 0].squeeze(-1)
+                tech_uncertainty = tech_predictions[:, 1].squeeze(-1)
+            else:
+                vtec_predictions = tech_predictions.squeeze(-1)
+                tech_uncertainty = None
+
             tech_prefix = f"{prefix}_{tech_name}"
             metrics.update({
-                f'{tech_prefix}_MSE': mse(tech_predictions[:, 0], tech_targets),
-                f'{tech_prefix}_MAE': mae(tech_predictions[:, 0], tech_targets),
-                f'{tech_prefix}_RMSE': rmse(tech_predictions[:, 0], tech_targets),
-                f'{tech_prefix}_MAPE': mape(tech_predictions[:, 0], tech_targets),
-                f'{tech_prefix}_R2': r2_score(tech_predictions[:, 0], tech_targets)
+                f'{tech_prefix}_MSE': mse(vtec_predictions, tech_targets),
+                f'{tech_prefix}_MAE': mae(vtec_predictions, tech_targets),
+                f'{tech_prefix}_RMSE': rmse(vtec_predictions, tech_targets),
+                f'{tech_prefix}_MAPE': mape(vtec_predictions, tech_targets),
+                f'{tech_prefix}_R2': r2_score(vtec_predictions, tech_targets)
             })
 
-            if predictions.shape[1] > 1:  # If there is an uncertainty column
-                uncertainty = tech_predictions[:, 1]
+            if tech_uncertainty is not None:  # If there is an uncertainty column
                 metrics.update({
-                    f'{tech_prefix}_uncertainty_mean': uncertainty.mean().item(),
-                    f'{tech_prefix}_uncertainty_std': uncertainty.std().item(),
-                    f'{tech_prefix}_uncertainty_median': uncertainty.median().item()
+                    f'{tech_prefix}_uncertainty_mean': tech_uncertainty.mean().item(),
+                    f'{tech_prefix}_uncertainty_std': tech_uncertainty.std().item(),
+                    f'{tech_prefix}_uncertainty_median': tech_uncertainty.median().item()
                 })
 
     return metrics
+
 

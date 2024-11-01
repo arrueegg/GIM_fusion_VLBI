@@ -11,7 +11,10 @@ def parse_args():
     parser.add_argument('--config_path', type=str, default='config/config.yaml', help='Path to the config file')
     parser.add_argument('--year', type=int, help='year of data to process')
     parser.add_argument('--doy', type=int, help='day of year of data to process')
+    parser.add_argument('--mode', type=str, help='Override training mode from config')
     parser.add_argument('--model_type', type=str, help='Override model type from config')
+    parser.add_argument('--loss_fn', type=str, help='Override Loss function from config')
+    parser.add_argument('--vlbi_loss_weight', type=float, help='Override VLBI loss weight from config')
     parser.add_argument('--debug', type=str, help='Enable debugging mode') 
     return parser.parse_args()
 
@@ -24,10 +27,16 @@ def parse_config():
         config['year'] = args.year
     if args.doy:
         config['doy'] = args.doy
+    if args.mode:
+        config['data']['mode'] = args.mode
     if args.model_type:
         config['model']['model_type'] = args.model_type
     if args.debug is not None:
         config['debugging']['debug'] = args.debug.lower() in ["true", "1", "yes"]
+    if args.loss_fn:
+        config['training']['loss_function'] = args.loss_fn
+    if args.vlbi_loss_weight:
+        config['training']['vlbi_loss_weight'] = args.vlbi_loss_weight
     
     if config["training"]["loss_function"] == 'LaplaceLoss':
         config["model"]["output_size"] = 2
