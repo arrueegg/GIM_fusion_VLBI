@@ -19,30 +19,35 @@ def r2_score(predictions, targets):
     ss_tot = torch.sum((targets - torch.mean(targets)) ** 2)
     return (1 - ss_res / ss_tot).item()
 
-def calculate_metrics(predictions, targets, prefix=""):
-    """Calculates and returns a dictionary of metrics with an optional prefix for logging."""
+def calculate_metrics(predictions, targets, techs, prefix):
+    """Calculates and returns a dictionary of metrics for each technology type."""
 
-    if predictions.dim() > 1:  # Check if outputs contain VTEC and uncertainty
-        vtec_predictions = predictions[:, 0].squeeze(-1)
-        uncertainty = predictions[:, 1].squeeze(-1)
-    else:
-        vtec_predictions = predictions.squeeze(-1)
-        uncertainty = None
+    techs = techs.squeeze(-1)
+    metrics = {}
 
-    # Main metrics for VTEC predictions
-    metrics = {
-        f'{prefix}_MSE': mse(vtec_predictions, targets),
-        f'{prefix}_MAE': mae(vtec_predictions, targets),
-        f'{prefix}_RMSE': rmse(vtec_predictions, targets),
-        f'{prefix}_MAPE': mape(vtec_predictions, targets),
-        f'{prefix}_R2': r2_score(vtec_predictions, targets),
-    }
+    for tech in [0, 1]:  # Iterate over GNSS (0) and VLBI (1)
+        tech_name = "GNSS" if tech == 0 else "VLBI"
+        tech_mask = techs == tech
+        tech_predictions = predictions[tech_mask]
+        tech_targets = targets[tech_mask]
 
-    # Additional uncertainty metrics if available
-    if uncertainty is not None:
-        metrics[f'{prefix}_uncertainty_mean'] = uncertainty.mean().item()
-        metrics[f'{prefix}_uncertainty_std'] = uncertainty.std().item()
-        metrics[f'{prefix}_uncertainty_median'] = uncertainty.median().item()
+        if tech_predictions.numel() > 0:  # Check if there are any samples for this tech
+            tech_prefix = f"{prefix}_{tech_name}"
+            metrics.update({
+                f'{tech_prefix}_MSE': mse(tech_predictions[:, 0], tech_targets),
+                f'{tech_prefix}_MAE': mae(tech_predictions[:, 0], tech_targets),
+                f'{tech_prefix}_RMSE': rmse(tech_predictions[:, 0], tech_targets),
+                f'{tech_prefix}_MAPE': mape(tech_predictions[:, 0], tech_targets),
+                f'{tech_prefix}_R2': r2_score(tech_predictions[:, 0], tech_targets)
+            })
+
+            if predictions.shape[1] > 1:  # If there is an uncertainty column
+                uncertainty = tech_predictions[:, 1]
+                metrics.update({
+                    f'{tech_prefix}_uncertainty_mean': uncertainty.mean().item(),
+                    f'{tech_prefix}_uncertainty_std': uncertainty.std().item(),
+                    f'{tech_prefix}_uncertainty_median': uncertainty.median().item()
+                })
 
     return metrics
 

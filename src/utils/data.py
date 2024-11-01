@@ -122,7 +122,7 @@ class SingleGNSSDataset(Dataset):
         x = torch.tensor(row.drop('vtec').values, dtype=torch.float32)
         y = torch.tensor(row['vtec'], dtype=torch.float32)
 
-        tech = torch.tensor(-1, dtype=torch.int64)  # -1 indicates no specific technique
+        tech = torch.tensor(0, dtype=torch.int64)  # 0 == GNSS
 
         return x, y, tech
     
@@ -169,6 +169,8 @@ class SingleVLBIDataset(Dataset):
 
     def load_data(self, data_files):
         data = pd.DataFrame()
+        if len(data_files) == 0:
+            return data
         data_list = [self.load_txt(file) for file in data_files]
         data = pd.concat(data_list, ignore_index=True)
 
@@ -309,7 +311,7 @@ class SingleVLBIDataset(Dataset):
         x = torch.tensor(row.drop('vtec').values, dtype=torch.float32)
         y = torch.tensor(row['vtec'], dtype=torch.float32)
         
-        tech = torch.tensor(-1, dtype=torch.int64)  # -1 indicates no specific technique
+        tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
 
         return x, y, tech
     
@@ -382,6 +384,7 @@ def get_data_loaders(config):
 
     if config["data"]["mode"] == "GNSS":
         train_dataset, val_dataset, test_dataset = get_GNSS_data(config)
+        test_dataset = FusionDataset(test_dataset, SingleVLBIDataset(config, split="test"))
     
     elif config["data"]["mode"] == "Fusion":
         train_gnss, val_gnss, test_gnss = get_GNSS_data(config)

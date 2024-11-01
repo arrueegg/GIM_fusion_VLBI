@@ -7,7 +7,7 @@ random_seed: 42
 
 # Data configuration
 data:
-  mode: "Fusion"    # Fusion or GNSS (only GNSS)
+  mode: "GNSS"    # Fusion or GNSS (only GNSS)
   GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
   columns_to_load:  #['station', 'stec', 'vtec', 'vtec_stddev', 'satres', 'ipplat', 'ipplon', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod'] # List of columns to load or None (no arg) for all columns

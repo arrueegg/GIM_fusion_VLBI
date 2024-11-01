@@ -54,6 +54,7 @@ def train(config, model, dataloader, criterion, optimizer, device):
 
     all_outputs = []
     all_targets = []
+    techs = []
 
     for i, (inputs, targets, tech) in tqdm(enumerate(dataloader), total=len(dataloader)):
 
@@ -63,24 +64,28 @@ def train(config, model, dataloader, criterion, optimizer, device):
         outputs = model(inputs).squeeze(-1)  # Forward pass
         loss = criterion(outputs, targets, tech)  # Compute loss
 
+        #calculate_metrics(outputs, targets, tech, prefix="train")
+
         loss.backward()  # Backward pass
         optimizer.step()  # Optimize
 
         running_loss += loss.item()
         all_outputs.append(outputs.detach().cpu())
         all_targets.append(targets.detach().cpu())
+        techs.append(tech.detach().cpu())
 
         if i >= 1 and config["training"]["overfit_single_batch"]:
             break
     
     avg_loss = running_loss / len(dataloader)
-    return avg_loss, torch.cat(all_outputs), torch.cat(all_targets)
+    return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def validate(model, dataloader, criterion, device):
     model.eval()
     running_loss = 0.0
     all_outputs = []
     all_targets = []
+    techs = []
     
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
@@ -97,14 +102,16 @@ def validate(model, dataloader, criterion, device):
             running_loss += loss.item()
             all_outputs.append(outputs.cpu())
             all_targets.append(targets.cpu())
+            techs.append(tech.cpu())
     
     avg_loss = running_loss / len(dataloader)
-    return avg_loss, torch.cat(all_outputs), torch.cat(all_targets)
+    return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def test(model, dataloader, device):
     model.eval()
     all_outputs = []
     all_targets = []
+    techs = []
 
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
@@ -118,8 +125,9 @@ def test(model, dataloader, device):
             
             all_outputs.append(outputs.cpu())
             all_targets.append(targets.cpu())
+            techs.append(tech.cpu())
     
-    return torch.cat(all_outputs), torch.cat(all_targets)
+    return torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def main():
     config = parse_config()
@@ -173,9 +181,9 @@ def main():
     for epoch in range(config["training"]["epochs"]):
         logger.info(f"Epoch {epoch+1}/{config['training']['epochs']}")
         
-        train_loss, train_outputs, train_targets = train(config, model, train_loader, criterion, optimizer, device)
+        train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, device)
         if not config["training"]["overfit_single_batch"]:
-            val_loss, val_outputs, val_targets = validate(model, val_loader, criterion, device)
+            val_loss, val_outputs, val_targets, val_techs = validate(model, val_loader, criterion, device)
         else:
             val_loss = best_val_loss
 
@@ -185,8 +193,8 @@ def main():
                 'train_loss': train_loss,
                 'val_loss': val_loss,
                 'learning_rate': scheduler.get_last_lr()[0],
-                **calculate_metrics(train_outputs, train_targets, prefix="train"),
-                **calculate_metrics(val_outputs, val_targets, prefix="val"),
+                **calculate_metrics(train_outputs, train_targets, techs=train_techs, prefix="train"),
+                **calculate_metrics(val_outputs, val_targets, techs=val_techs, prefix="val"),
                 'epoch': epoch + 1
             })
 
@@ -209,8 +217,8 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
 
     # Final test accuracy
-    test_outputs, test_targets = test(model, test_loader, device)
-    test_metrics = calculate_metrics(test_outputs, test_targets, prefix="test")
+    test_outputs, test_targets, test_techs = test(model, test_loader, device)
+    test_metrics = calculate_metrics(test_outputs, test_targets, techs=test_techs, prefix="test")
     if not config["debugging"]["debug"]:
         wandb.log(test_metrics)
     formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
