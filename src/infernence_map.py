@@ -11,6 +11,7 @@ from models.model import get_model
 from utils.data import get_data_loaders
 
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from utils.locationencoder.pe import SphericalHarmonics
@@ -68,10 +69,9 @@ def generate_grid(config, lat_dim, lon_dim, sod, date):
     return lonlat_tensor, time_tensor
 
 
-def inference(config, model, device, lat_dim=71, lon_dim=73):
+def inference(config, model, device, lat_dim=71, lon_dim=73, interval=3600):
 
-    date = datetime.strptime(f'{config["year"]}-01-01', "%Y-%m-%d") + timedelta(days=int(config["doy"]) - 1)
-    interval = 3600 #900 (15min)
+    date = datetime.strptime(f"{config['year']}-01-01", "%Y-%m-%d") + timedelta(days=int(config['doy']) - 1)
     sods = np.arange(0, 86400  + interval, interval)  # Time steps
 
     mean_vtec_preds = []
@@ -103,57 +103,15 @@ def inference(config, model, device, lat_dim=71, lon_dim=73):
     uncertainties = np.array(uncertainties)     
 
     # Save predictions and uncertainties
-    np.save(f'./experiments/maps/mean_vtec_preds_{config["year"]}_{config["doy"]}.npy', mean_vtec_preds)
-    np.save(f'./experiments/maps/var_vtec_preds_{config["year"]}_{config["doy"]}.npy', uncertainties)
+    np.save(f"./experiments/maps/mean_vtec_preds_{config['year']}_{config['doy']}.npy", mean_vtec_preds)
+    np.save(f"./experiments/maps/var_vtec_preds_{config['year']}_{config['doy']}.npy", uncertainties)
 
     return mean_vtec_preds, uncertainties
 
-def shape_check_visual(config, model, device, lat_dim, lon_dim):
-
-    # Date and time steps
-    date = datetime.strptime(f'{config["year"]}-01-01', "%Y-%m-%d") + timedelta(days=int(config["doy"]) - 1)
-    sods = np.arange(0, 87300, 900)  # e.g., every 15 minutes
-
-    # Prepare arrays to store dummy spatial-temporal data
-    vtec_visual = []
-    uncertainty_visual = []
-
-    for sod in sods:
-        # Generate the grid and time features for the given sod
-        lonlat, time_features = generate_grid(lat_dim, lon_dim, sod, date)
-
-        # Create dummy output based on latitude and longitude
-        # Set vtec to 1 where abs(lat) > 5, otherwise keep it zero
-        dummy_vtec = torch.zeros(lonlat.shape[0])
-        dummy_vtec[torch.abs(lonlat[:, 1]) < 0.1] = 1  # Logical indexing for clarity
-        dummy_vtec = dummy_vtec.reshape(lat_dim, lon_dim)
-
-        plt.figure()
-        plt.imshow(dummy_vtec)
-        plt.show()
-
-        # For uncertainty, create a simple gradient or constant to visualize structure
-        dummy_uncertainty = torch.linspace(0, 1, lat_dim * lon_dim).reshape(lat_dim, lon_dim)
-
-        # Append dummy outputs to lists, adding a time dimension
-        vtec_visual.append(dummy_vtec.cpu().numpy())
-        uncertainty_visual.append(dummy_uncertainty.cpu().numpy())
-
-    # Convert lists to arrays with shape (timesteps, lat, lon) for visualization
-    vtec_visual = np.array(vtec_visual)
-    uncertainty_visual = np.array(uncertainty_visual)
-
-    print(f"Dummy VTEC visual shape: {vtec_visual.shape}")
-    print(f"Dummy uncertainty visual shape: {uncertainty_visual.shape}")
-
-    return vtec_visual, uncertainty_visual
-
-def plot_mean(vtec_data, std_data, lat_dim, lon_dim):
+def plot_mean(config, vtec_data, std_data, lat_dim, lon_dim):
 
     vtec_data = np.mean(vtec_data, axis=0)
-    #vtec_data = vtec_data[1]
     std_data = np.mean(std_data, axis=0)
-    #std_data = std_data[1]
     
     # Create subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
@@ -163,23 +121,106 @@ def plot_mean(vtec_data, std_data, lat_dim, lon_dim):
     lon_range = np.linspace(-180, 180, lon_dim)     # 73 lon points
 
     # Plot VTEC data
-    ax1.set_title('VTEC Map')
-    vtec_plot = ax1.pcolormesh(lon_range, lat_range, vtec_data, shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+    ax1.set_title(f"VTEC Map {config['year']} {config['doy']}")
+    vtec_plot = ax1.pcolormesh(lon_range, lat_range, vtec_data, cmap='viridis', shading='nearest', transform=ccrs.PlateCarree())
     ax1.coastlines()
     ax1.add_feature(cfeature.BORDERS, linestyle=':')
     fig.colorbar(vtec_plot, ax=ax1, orientation='vertical', label='VTEC')
 
     # Plot standard deviation data
-    ax2.set_title('Standard Deviation Map')
-    std_plot = ax2.pcolormesh(lon_range, lat_range, std_data, shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+    ax2.set_title(f"Standard Deviation Map {config['year']} {config['doy']}")
+    std_plot = ax2.pcolormesh(lon_range, lat_range, std_data, cmap='viridis', shading='nearest', transform=ccrs.PlateCarree())
     ax2.coastlines()
     ax2.add_feature(cfeature.BORDERS, linestyle=':')
     fig.colorbar(std_plot, ax=ax2, orientation='vertical', label='Standard Deviation')
 
     # Show the plots
     plt.tight_layout()
-    plt.show()
+    os.makedirs(f"experiments/plots/{config['year']}_{config['doy']}", exist_ok=True)
+    plt.savefig(f"experiments/plots/{config['year']}_{config['doy']}/mean_map_{config['year']}_{config['doy']}_{config['model']['model_type']}_{config['training']['loss_function']}_lossW{config['training']['vlbi_loss_weight']}_samplingW{config['training']['vlbi_sampling_weight']}.png")
+    #plt.show()
 
+def plot_epoch(config, vtec_data, std_data, lat_dim, lon_dim, interval):
+
+    sods = np.arange(0, 86400  + interval, interval)
+
+    for i in range(vtec_data.shape[0]):
+    
+        # Create subplots
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
+
+        # Latitude and longitude ranges matching the VTEC data
+        lat_range = np.linspace(-87.5, 87.5, lat_dim)   # 71 lat points
+        lon_range = np.linspace(-180, 180, lon_dim)     # 73 lon points
+        time = f"{sods[i] // 3600}:{(sods[i] % 3600 // 60):02d}"
+
+        # Plot VTEC data
+        ax1.set_title(f"VTEC Map Epoch {config['year']}-{config['doy']}-{time}")
+        vtec_plot = ax1.pcolormesh(lon_range, lat_range, vtec_data[i], shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+        ax1.coastlines()
+        ax1.add_feature(cfeature.BORDERS, linestyle=':')
+        fig.colorbar(vtec_plot, ax=ax1, orientation='vertical', label='VTEC')
+
+        # Plot standard deviation data
+        ax2.set_title(f"Standard Deviation Map Epoch {config['year']}-{config['doy']}-{time}")
+        std_plot = ax2.pcolormesh(lon_range, lat_range, std_data[i], shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+        ax2.coastlines()
+        ax2.add_feature(cfeature.BORDERS, linestyle=':')
+        fig.colorbar(std_plot, ax=ax2, orientation='vertical', label='Standard Deviation')
+
+        # Show the plots
+        plt.tight_layout()
+        os.makedirs(f"experiments/plots/{config['year']}_{config['doy']}", exist_ok=True)
+        plt.savefig(f"experiments/plots/{config['year']}_{config['doy']}/VTEC_and_STD_{config['year']}_{config['doy']}_{sods[i]}_{config['model']['model_type']}_{config['training']['loss_function']}_lossW{config['training']['vlbi_loss_weight']}_samplingW{config['training']['vlbi_sampling_weight']}.png")
+        #plt.show()
+
+def plot_epoch_animation(config, vtec_data, std_data, lat_dim, lon_dim, interval):
+    sods = np.arange(0, 86400 + interval, interval)
+
+    # Create the figure and subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
+    
+    # Latitude and longitude ranges
+    lat_range = np.linspace(-87.5, 87.5, lat_dim)
+    lon_range = np.linspace(-180, 180, lon_dim)
+
+    # Initialize the plots
+    vtec_plot = ax1.pcolormesh(lon_range, lat_range, vtec_data[0], shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+    ax1.coastlines()
+    ax1.add_feature(cfeature.BORDERS, linestyle=':')
+    fig.colorbar(vtec_plot, ax=ax1, orientation='vertical', label='VTEC')
+
+    std_plot = ax2.pcolormesh(lon_range, lat_range, std_data[0], shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+    ax2.coastlines()
+    ax2.add_feature(cfeature.BORDERS, linestyle=':')
+    fig.colorbar(std_plot, ax=ax2, orientation='vertical', label='Standard Deviation')
+
+    # Function to update the plots for each frame
+    def update(frame):
+        ax1.clear()
+        ax2.clear()
+
+        time = f"{sods[frame] // 3600}:{(sods[frame] % 3600 // 60):02d}"
+        
+        # VTEC plot update
+        ax1.set_title(f"VTEC Map Epoch {config['year']} {config['doy']} {time}")
+        vtec_plot = ax1.pcolormesh(lon_range, lat_range, vtec_data[frame], shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+        ax1.coastlines()
+        ax1.add_feature(cfeature.BORDERS, linestyle=':')
+        fig.colorbar(vtec_plot, ax=ax1, orientation='vertical', label='VTEC')
+
+        # Standard Deviation plot update
+        ax2.set_title(f"Standard Deviation Map Epoch {config['year']} {config['doy']} {time}")
+        std_plot = ax2.pcolormesh(lon_range, lat_range, std_data[frame], shading='nearest', cmap='viridis', transform=ccrs.PlateCarree())
+        ax2.coastlines()
+        ax2.add_feature(cfeature.BORDERS, linestyle=':')
+        fig.colorbar(std_plot, ax=ax2, orientation='vertical', label='Standard Deviation')
+
+    # Create the animation
+    ani = animation.FuncAnimation(fig, update, frames=vtec_data.shape[0], blit=False)
+
+    # Save the animation as a GIF
+    ani.save(f"experiments/plots/{config['year']}_{config['doy']}/VTEC_and_STD_{config['year']}_{config['doy']}_{config['model']['model_type']}_{config['training']['loss_function']}_lossW{config['training']['vlbi_loss_weight']}_samplingW{config['training']['vlbi_sampling_weight']}.gif", writer='pillow')
 
 
 def main():
@@ -187,23 +228,27 @@ def main():
     # Generate lat/lon grid dimensions
     lat_dim = int((175 // 1) + 1) 
     lon_dim = int((360 // 1) + 1) 
+    interval = 3600 #900 (15min)
 
     config = parse_config()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     #spherical_harmonics = SphericalHarmonics(legendre_polys=16)
-    model = get_model(config).to(device)
-    model_path = os.path.join(config['logging']['checkpoint_dir'], f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth')
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True)['model_state_dict'])
     logger.info(f"Starting inference for year {config['year']} DOY {config['doy']}")
-    mean_vtec, uncertainty = inference(config, model, device, lat_dim, lon_dim)
+
+    model = get_model(config).to(device)
+    model_path = os.path.join(config['logging']['checkpoint_dir'], f"best_model_{config['data']['mode']}_{config['model']['model_type']}_{config['year']}-{config['doy']}.pth")
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True)['model_state_dict'])
+    vtec, uncertainty = inference(config, model, device, lat_dim, lon_dim, interval)
 
     # Save predictions
-    np.save(f'./experiments/maps/mean_vtec_preds_{config["year"]}_{config["doy"]}.npy', mean_vtec)
-    np.save(f'./experiments/maps/var_vtec_preds_{config["year"]}_{config["doy"]}.npy', uncertainty)
+    np.save(f"./experiments/maps/mean_vtec_preds_{config['year']}_{config['doy']}.npy", vtec)
+    np.save(f"./experiments/maps/var_vtec_preds_{config['year']}_{config['doy']}.npy", uncertainty)
     logger.info("Inference completed.")
 
-    #plot_mean(mean_vtec, uncertainty, lat_dim, lon_dim)
+    plot_mean(config, vtec, uncertainty, lat_dim, lon_dim)
+    plot_epoch(config, vtec, uncertainty, lat_dim, lon_dim, interval)
+    plot_epoch_animation(config, vtec, uncertainty, lat_dim, lon_dim, interval)
 
 if __name__ == "__main__":
     main()

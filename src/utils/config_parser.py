@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument('--model_type', type=str, help='Override model type from config')
     parser.add_argument('--loss_fn', type=str, help='Override Loss function from config')
     parser.add_argument('--vlbi_loss_weight', type=float, help='Override VLBI loss weight from config')
+    parser.add_argument('--vlbi_sampling_weight', type=float, help='Override VLBI sampling weight from config')
     parser.add_argument('--debug', type=str, help='Enable debugging mode') 
     return parser.parse_args()
 
