@@ -1,5 +1,8 @@
 import yaml
 import argparse
+import os
+import hashlib
+import json
 
 def load_config(config_path):
     with open(config_path, 'r') as file:
@@ -18,6 +21,24 @@ def parse_args():
     parser.add_argument('--vlbi_sampling_weight', type=float, help='Override VLBI sampling weight from config')
     parser.add_argument('--debug', type=str, help='Enable debugging mode') 
     return parser.parse_args()
+
+def get_hash(config):
+    # Convert the config to a string in a consistent order
+    config_string = yaml.dump(config, sort_keys=True)
+    # Generate an MD5 hash of the config string
+    hash = hashlib.md5(config_string.encode()).hexdigest()
+    return hash
+
+def create_experiment(config):
+    hash = get_hash(config)
+    # Ensure the experiment directory exists
+    config['output_dir'] = f"experiments/{hash}"
+    os.makedirs(f"experiments/{hash}", exist_ok=True)
+    config_path = os.path.join(config['output_dir'], 'config.yaml')
+
+    # Save the config to a YAML file
+    with open(config_path, 'w') as file:
+        yaml.safe_dump(config, file, default_flow_style=False)
 
 def parse_config():
     args = parse_args()
@@ -38,6 +59,8 @@ def parse_config():
         config['training']['loss_function'] = args.loss_fn
     if args.vlbi_loss_weight:
         config['training']['vlbi_loss_weight'] = args.vlbi_loss_weight
+    if args.vlbi_sampling_weight:
+        config['training']['vlbi_sampling_weight'] = args.vlbi_sampling_weight
     
     if config["training"]["loss_function"] == 'LaplaceLoss':
         config["model"]["output_size"] = 2
@@ -55,4 +78,8 @@ def parse_config():
         config["model"]["input_size"] += config["preprocessing"]["SH_degree"]**2 
     else:
         config["model"]["input_size"] += 2
+
+    create_experiment(config)
     return config
+
+

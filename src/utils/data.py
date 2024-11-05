@@ -228,8 +228,12 @@ class SingleVLBIDataset(Dataset):
 
     def preprocess(self, df):
         if self.split != 'random':
-            sta_list = np.atleast_1d(np.loadtxt(f'./src/data_processing/sit_{self.split}_vlbi.list', dtype=str))
-            df = df[df['station'].isin(sta_list)]
+            file_path = f'./src/data_processing/sit_{self.split}_vlbi.list'
+            if os.path.getsize(file_path) > 0:  # Check if the file is not empty
+                sta_list = np.atleast_1d(np.loadtxt(file_path, dtype=str))
+            else:
+                sta_list = np.array([]) 
+            df = df[df['station'].isin(sta_list)].copy()
 
         # Handle empty dataframe case
         if df.empty:
@@ -237,7 +241,7 @@ class SingleVLBIDataset(Dataset):
 
         # Filter data
         df['date'] = pd.to_datetime(df['date'], format='%Y/%m/%d')
-        df['doy'] = df['date'].dt.dayofyear
+        df.loc[:, 'doy'] = df['date'].dt.dayofyear
         mask = df['doy'] == int(self.doy) 
         df = df[mask]
 

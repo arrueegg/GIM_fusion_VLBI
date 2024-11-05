@@ -172,8 +172,8 @@ def main():
                                                      gamma=config["training"]["scheduler_gamma"])
 
     # Early stopping and checkpoint setup
-    checkpoint_dir = config["logging"]["checkpoint_dir"]
-    os.makedirs(checkpoint_dir, exist_ok=True)
+    model_dir = os.path.join(config['output_dir'], 'model')
+    os.makedirs(model_dir, exist_ok=True)
     best_val_loss = float('inf')
     patience_counter = 0
 
@@ -205,7 +205,7 @@ def main():
 
         if val_loss < best_val_loss:
             patience_counter = 0
-            best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, checkpoint_dir)
+            best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, model_dir)
         else:
             patience_counter += 1
             if patience_counter >= config["training"]["patience"]:
@@ -213,7 +213,7 @@ def main():
                 break
 
     # Load best model for final testing
-    checkpoint = torch.load(os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'), weights_only=True)
+    checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'), weights_only=True)
     model.load_state_dict(checkpoint['model_state_dict'])
 
     # Final test accuracy

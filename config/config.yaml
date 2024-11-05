@@ -51,13 +51,6 @@ training:
   patience: 5              # Patience for early stopping
   overfit_single_batch: False  # Sanity check to test if model is able to overfit on a single batch
 
-
-# Logging configuration
-logging:
-  log_to_file: true
-  log_file: "experiments/logs/training.log"
-  checkpoint_dir: "experiments/checkpoints/"
-
 # Debugging configuration
 debugging:
   debug: True           # True = run in debug mode (no wandb logging)
