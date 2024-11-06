@@ -25,6 +25,7 @@ class SingleGNSSDataset(Dataset):
         
         data_file = os.path.join(config['data']['GNSS_data_path'], str(year), str(doy), f'ccl_{year}{doy}_30_5.h5')
         self.split = split
+        self.mode = config['data']['mode']
         self.data = self.load_data(data_file)
     
     def __len__(self):
@@ -96,31 +97,13 @@ class SingleGNSSDataset(Dataset):
             columns_to_keep.extend(['sm_lat', 'sm_lon'])  # `sm_lat` and `sm_lon` if not using SH
 
         columns_to_keep.extend(['sin_utc', 'cos_utc', 'sod_normalize'])
-        return df[columns_to_keep].copy()
-    
-    def preprocess(self, row):
-        combined_features = []
-
-        if self.sh_encoding:
-            # Extend with precomputed SH embedding columns from DataFrame
-            combined_features.extend(row[-self.sh_degree**2:].tolist())  # Adjust if needed
-        else:
-            combined_features.extend([row['sm_lat'], row['sm_lon']])
-
-        # Add other features
-        other_features = np.array([row['sin_utc'], row['cos_utc'], row['sod_normalize']])
-        combined_features.extend(other_features)
-
-        return np.array(combined_features)
+        
+        return torch.tensor(df[columns_to_keep].values, dtype=torch.float32)
 
     def __getitem__(self, idx):
-        # Use iloc for DataFrame access by index
-        row = self.data.iloc[idx]
-        
-        #features = self.preprocess(row)
-        #x = torch.tensor(features, dtype=torch.float32)
-        x = torch.tensor(row.drop('vtec').values, dtype=torch.float32)
-        y = torch.tensor(row['vtec'], dtype=torch.float32)
+
+        x = self.data[idx, 1:]  # All columns except the last one as features
+        y = self.data[idx, 0]   # Last column as the label
 
         tech = torch.tensor(0, dtype=torch.int64)  # 0 == GNSS
 
@@ -302,7 +285,7 @@ class SingleVLBIDataset(Dataset):
             columns_to_keep.extend(['sm_lat', 'sm_lon'])  # `sm_lat` and `sm_lon` if not using SH
 
         columns_to_keep.extend(['sin_utc', 'cos_utc', 'sod_normalize'])
-        return df[columns_to_keep].copy()
+        return torch.tensor(df[columns_to_keep].values, dtype=torch.float32)
         
     def coord_transform(self, coords, epochs, inp_type, out_type):
         coord_inp = Coords(coords, inp_type, 'sph')
@@ -310,10 +293,9 @@ class SingleVLBIDataset(Dataset):
         return coord_inp.convert(out_type, 'sph')
 
     def __getitem__(self, idx):
-        row = self.data.iloc[idx]
 
-        x = torch.tensor(row.drop('vtec').values, dtype=torch.float32)
-        y = torch.tensor(row['vtec'], dtype=torch.float32)
+        x = self.data[idx, 1:]  # All columns except the last one as features
+        y = self.data[idx, 0]   # Last column as the label
         
         tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
 
@@ -329,19 +311,21 @@ class FusionDataset(Dataset):
         return len(self.data)
 
     def combine(self):
-        # Add "technique" column to each dataset before concatenation
-        self.gnss_dataset.data['technique'] = 0  # GNSS encoded as 0
-        self.vlbi_dataset.data['technique'] = 1  # VLBI encoded as 1
+        # Add "technique" column by concatenating with an additional tensor
+        gnss_technique_col = torch.zeros((self.gnss_dataset.data.size(0), 1), dtype=torch.float32)
+        vlbi_technique_col = torch.ones((self.vlbi_dataset.data.size(0), 1), dtype=torch.float32)
+        
+        # Concatenate technique column to each dataset
+        gnss_tensor = torch.cat([self.gnss_dataset.data, gnss_technique_col], dim=1)
+        vlbi_tensor = torch.cat([self.vlbi_dataset.data, vlbi_technique_col], dim=1)
 
-        if self.vlbi_dataset.data.empty:
-            gnss_tensor = torch.tensor(self.gnss_dataset.data.values, dtype=torch.float32)
+        # Check if VLBI data is empty and return GNSS tensor only if so
+        if vlbi_tensor.size(0) == 0:
             return gnss_tensor
         
-        # Concatenate GNSS and VLBI data as DataFrames
-        combined_df = pd.concat([self.gnss_dataset.data, self.vlbi_dataset.data], ignore_index=True)
-
-        # Convert the DataFrame to a torch tensor
-        combined_tensor = torch.tensor(combined_df.values, dtype=torch.float32)
+        # Concatenate GNSS and VLBI tensors along the first dimension
+        combined_tensor = torch.cat([gnss_tensor, vlbi_tensor], dim=0)
+        
         return combined_tensor
 
     def __getitem__(self, idx):
