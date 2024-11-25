@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument('--vlbi_loss_weight', type=float, help='Override VLBI loss weight from config')
     parser.add_argument('--vlbi_sampling_weight', type=float, help='Override VLBI sampling weight from config')
     parser.add_argument('--debug', type=str, help='Enable debugging mode') 
-    return parser.parse_args()
+    return parser.parse_args() 
 
 def get_hash(config):
     # Convert the config to a string in a consistent order

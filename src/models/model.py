@@ -25,10 +25,11 @@ def get_activation_fn(activation):
         raise ValueError(f"Unsupported activation function: {activation}")
 
 # Initialization function
-def init_xavier(model, activation):
+def init_xavier(model, activation, model_seed):
     def init_weights(m):
         if isinstance(m, nn.Linear) and m.weight.requires_grad:
             gain = nn.init.calculate_gain(activation)
+            torch.manual_seed(model_seed)  # Set the seed for reproducibility
             torch.nn.init.xavier_normal_(m.weight, gain=gain)
             #torch.nn.init.xavier_uniform_(m.weight, gain=gain)  # Alternative (common choice for small nets)
             if m.bias is not None:

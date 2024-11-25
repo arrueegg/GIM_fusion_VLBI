@@ -311,22 +311,22 @@ class FusionDataset(Dataset):
         return len(self.data)
 
     def combine(self):
-        # Add "technique" column by concatenating with an additional tensor
+        # Add "technique" column to the GNSS dataset
         gnss_technique_col = torch.zeros((self.gnss_dataset.data.size(0), 1), dtype=torch.float32)
-        vlbi_technique_col = torch.ones((self.vlbi_dataset.data.size(0), 1), dtype=torch.float32)
-        
-        # Concatenate technique column to each dataset
         gnss_tensor = torch.cat([self.gnss_dataset.data, gnss_technique_col], dim=1)
-        vlbi_tensor = torch.cat([self.vlbi_dataset.data, vlbi_technique_col], dim=1)
 
-        # Check if VLBI data is empty and return GNSS tensor only if so
-        if vlbi_tensor.size(0) == 0:
-            return gnss_tensor
+        # Check if VLBI dataset is available and not empty
+        if hasattr(self.vlbi_dataset, 'data') and self.vlbi_dataset.data is not None and self.vlbi_dataset.data.size(0) > 0:
+            # Add "technique" column to the VLBI dataset
+            vlbi_technique_col = torch.ones((self.vlbi_dataset.data.size(0), 1), dtype=torch.float32)
+            vlbi_tensor = torch.cat([self.vlbi_dataset.data, vlbi_technique_col], dim=1)
+
+            # Concatenate GNSS and VLBI tensors
+            combined_tensor = torch.cat([gnss_tensor, vlbi_tensor], dim=0)
+            return combined_tensor
         
-        # Concatenate GNSS and VLBI tensors along the first dimension
-        combined_tensor = torch.cat([gnss_tensor, vlbi_tensor], dim=0)
-        
-        return combined_tensor
+        # If VLBI dataset is empty, return GNSS tensor only
+        return gnss_tensor
 
     def __getitem__(self, idx):
         # Split features and label from the combined tensor

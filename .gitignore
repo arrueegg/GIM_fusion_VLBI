@@ -12,3 +12,5 @@ wandb/
 
 # Ignore specific files
 experiments/
+src/data_processing/plots/
+Shuyins_code/

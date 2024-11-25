@@ -12,11 +12,8 @@ from models.model import get_model
 from utils.data import get_data_loaders
 
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 import imageio
-import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 from utils.locationencoder.pe import SphericalHarmonics
 
 import warnings
@@ -91,6 +88,7 @@ def inference(config, model, device, lat_dim=71, lon_dim=73, interval=3600):
             # Extract VTEC predictions and uncertainties
             if config['training']['loss_function'] == 'LaplaceLoss' or config['training']['loss_function'] == 'GaussianNLLLoss':
                 vtec_pred, uncertainty = outputs[:, 0], outputs[:, 1]
+                uncertainty = 2 * uncertainty ** 2
             else:
                 vtec_pred = outputs
                 uncertainty = torch.zeros_like(vtec_pred)
@@ -216,20 +214,40 @@ def main():
     #spherical_harmonics = SphericalHarmonics(legendre_polys=16)
     logger.info(f"Starting inference for year {config['year']} DOY {config['doy']}")
 
-    model = get_model(config).to(device)
-    model_path = os.path.join(config['output_dir'], 'model', f"best_model_{config['data']['mode']}_{config['model']['model_type']}_{config['year']}-{config['doy']}.pth")
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True)['model_state_dict'])
-    vtec, uncertainty = inference(config, model, device, lat_dim, lon_dim, interval)
+    # Initialize storage for ensemble predictions
+    ensemble_vtec = []
+    ensemble_uncertainty = []
 
-    # Save predictions
+    model_paths = os.listdir(os.path.join(config['output_dir'], 'model'))
+    for model_path in model_paths:
+        model_path = os.path.join(config['output_dir'], 'model', model_path)
+        model = get_model(config).to(device)
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True)['model_state_dict'])
+        model.eval()
+
+        # Run inference for this model
+        vtec, uncertainty = inference(config, model, device, lat_dim, lon_dim, interval)
+
+        # Collect predictions for ensemble averaging
+        ensemble_vtec.append(vtec)
+        ensemble_uncertainty.append(uncertainty)
+
+    # Aggregate ensemble predictions
+    mean_vtec = np.mean(ensemble_vtec, axis=0)
+    mean_vtec_unc = np.mean(ensemble_uncertainty, axis=0)
+    mean_vtec_squared = np.mean(np.square(ensemble_vtec), axis=0)
+    var_vtec = mean_vtec_squared - mean_vtec**2 + mean_vtec_unc
+
+    # Save aggregated predictions
     os.makedirs(f"{config['output_dir']}/maps", exist_ok=True)
-    np.save(f"{config['output_dir']}/maps/mean_vtec_preds_{config['year']}_{config['doy']}.npy", vtec)
-    np.save(f"{config['output_dir']}/maps/var_vtec_preds_{config['year']}_{config['doy']}.npy", uncertainty)
+    np.save(f"{config['output_dir']}/maps/mean_vtec_preds_{config['year']}_{config['doy']}.npy", mean_vtec)
+    np.save(f"{config['output_dir']}/maps/var_vtec_preds_{config['year']}_{config['doy']}.npy", var_vtec)
     logger.info("Inference completed.")
 
-    plot_mean(config, vtec, uncertainty, lat_dim, lon_dim)
-    plot_epoch(config, vtec, uncertainty, lat_dim, lon_dim, interval)
-    #plot_epoch_animation(config, vtec, uncertainty, lat_dim, lon_dim, interval)
+    # Plot results
+    plot_mean(config, mean_vtec, var_vtec, lat_dim, lon_dim)
+    plot_epoch(config, mean_vtec, var_vtec, lat_dim, lon_dim, interval)
+    # plot_epoch_animation(config, mean_vtec, var_vtec, lat_dim, lon_dim, interval)
 
     create_gif_from_images(config)
     logger.info("Plots and GIF creation completed.")

@@ -34,7 +34,7 @@ def setup_seed(seed):
     random.seed(seed)
     
 # Function to save model checkpoints
-def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkpoint_dir, model_seed):
+def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkpoint_dir):
     logger.info(f"Validation loss improved from {best_loss:.2f} to {val_loss:.2f}. Saving model checkpoint.")
     torch.save({
         'epoch': epoch,
@@ -45,7 +45,7 @@ def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkp
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'val_loss': val_loss,
-    }, os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'))
+    }, os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'))
     return val_loss
 
 def train(config, model, dataloader, criterion, optimizer, device):
@@ -131,9 +131,13 @@ def test(model, dataloader, device):
 
 def main():
     config = parse_config()
-    logger.info(f"Starting ensemble training with {config['model']['ensemble_size']} member/s")
+    logger.info(f"Starting training for project: {config['project_name']}")
 
     setup_seed(config['random_seed'])
+
+    if not config["debugging"]["debug"]:
+        wandbname = f"{config['data']['mode']} {config['model']['model_type']} {config['year']}-{config['doy']}"
+        wandb.init(project=config['project_name'], name=wandbname, config=config)
 
     # Set up device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -158,107 +162,70 @@ def main():
         #logger.info(f"x: {x[0]}, y: {y[0]}, tech: {tech[0]}")
         break
 
-    # Ensemble configuration
-    ensemble_size = config['model']['ensemble_size']
     model_dir = os.path.join(config['output_dir'], 'model')
     os.makedirs(model_dir, exist_ok=True)
+    # Initialize model, criterion, optimizer
+    model = get_model(config).to(device)
+    init_xavier(model, activation=config["model"]["activation"])
+    criterion = get_criterion(config)
+    optimizer = get_optimizer(config, model.parameters())
+    if config["training"]["scheduler"] != None:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config["training"]["scheduler_step_size"],
+                                                     gamma=config["training"]["scheduler_gamma"])
 
-    # Train ensemble models
-    for model_seed in range(ensemble_size):
-        logger.info(f"Training ensemble model {model_seed+1}/{ensemble_size}")
+    
+    best_val_loss = float('inf')
+    patience_counter = 0
 
-        if not config["debugging"]["debug"]:
-            wandbname = f"{config['data']['mode']} {config['model']['model_type']} {config['year']}-{config['doy']} m{1+model_seed:02}"
-            wandb.init(project=config['project_name'], name=wandbname, config=config)
+    # Training and validation loop
+    for epoch in range(config["training"]["epochs"]):
+        logger.info(f"Epoch {epoch+1}/{config['training']['epochs']}")
         
-        # Initialize model, criterion, optimizer
-        model = get_model(config).to(device)
-        init_xavier(model, activation=config["model"]["activation"], model_seed=model_seed)
-        criterion = get_criterion(config)
-        optimizer = get_optimizer(config, model.parameters())
-        scheduler = config["training"]["scheduler"]
-        if scheduler:
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                optimizer, step_size=config["training"]["scheduler_step_size"], 
-                gamma=config["training"]["scheduler_gamma"]
-            )
+        train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, device)
+        if not config["training"]["overfit_single_batch"]:
+            val_loss, val_outputs, val_targets, val_techs = validate(model, val_loader, criterion, device)
+        else:
+            val_loss = best_val_loss
 
-        best_val_loss = float('inf')
-        patience_counter = 0
-
-        # Training and validation loop
-        for epoch in range(config["training"]["epochs"]):
-            logger.info(f"Model {model_seed+1}/{ensemble_size}, Epoch {epoch+1}/{config['training']['epochs']}")
-            
-            train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, device)
-            if not config["training"]["overfit_single_batch"]:
-                val_loss, val_outputs, val_targets, val_techs = validate(model, val_loader, criterion, device)
-            else:
-                val_loss = best_val_loss
-
-            # Calculate and log metrics
-            if not config["debugging"]["debug"]:
-                wandb.log({
-                    'train_loss': train_loss,
-                    'val_loss': val_loss,
-                    'learning_rate': scheduler.get_last_lr()[0],
-                    **calculate_metrics(train_outputs, train_targets, techs=train_techs, prefix="train"),
-                    **calculate_metrics(val_outputs, val_targets, techs=val_techs, prefix="val"),
-                    'epoch': epoch + 1
-                })
-
-            if scheduler:
-                scheduler.step()
-
-            logger.info(f"Model {model_seed+1}/{ensemble_size}, Train Loss: {train_loss:.2f}, Validation Loss: {val_loss:.2f}")
-
-            if val_loss < best_val_loss:
-                patience_counter = 0
-                best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, model_dir, model_seed)
-            else:
-                patience_counter += 1
-                if patience_counter >= config["training"]["patience"]:
-                    logger.info(f"Early stopping triggered for model {model_seed+1}/{ensemble_size}.")
-                    break
-
-        # Load best model for final testing
-        checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'), weights_only=True)
-        model.load_state_dict(checkpoint['model_state_dict'])
-
-        # Final test accuracy
-        test_outputs, test_targets, test_techs = test(model, test_loader, device)
-        test_metrics = calculate_metrics(test_outputs, test_targets, techs=test_techs, prefix="test")
-
-        formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
-        logger.info(f'Test metrics: {formatted_test_metrics}')
+        # Calculate and log metrics
         if not config["debugging"]["debug"]:
-            wandb.log(test_metrics)
-            wandb.finish()
+            wandb.log({
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'learning_rate': scheduler.get_last_lr()[0],
+                **calculate_metrics(train_outputs, train_targets, techs=train_techs, prefix="train"),
+                **calculate_metrics(val_outputs, val_targets, techs=val_techs, prefix="val"),
+                'epoch': epoch + 1
+            })
 
-    # Ensemble testing
-    logger.info("Testing ensemble models...")
-    all_predictions = []
-    for model_seed in range(ensemble_size):
-        # Load best model for final testing
-        checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'), weights_only=True)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        outputs, _, _ = test(model, test_loader, device)
-        all_predictions.append(outputs)
+        if config["training"]["scheduler"] != None: 
+            scheduler.step()  # Adjust learning rate
 
-    # Combine predictions (e.g., average for regression)
-    ensemble_predictions = torch.mean(torch.stack(all_predictions), dim=0)
+        logger.info(f"Train Loss: {train_loss:.2f}, Validation Loss: {val_loss:.2f}")
 
-    # Calculate metrics for ensemble predictions
-    test_targets_techs = torch.cat([torch.stack((y, tech), dim=0) for _, y, tech in test_loader], dim=1)
-    #Separate targets and techniques
-    targets = test_targets_techs[0, :]
-    techniques = test_targets_techs[1, :]
-    # Calculate metrics
-    test_metrics = calculate_metrics(ensemble_predictions, targets, techniques, prefix="test")
+        if val_loss < best_val_loss:
+            patience_counter = 0
+            best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, model_dir)
+        else:
+            patience_counter += 1
+            if patience_counter >= config["training"]["patience"]:
+                logger.info("Early stopping triggered. Stopping training.")
+                break
+
+    # Load best model for final testing
+    checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}.pth'), weights_only=True)
+    model.load_state_dict(checkpoint['model_state_dict'])
+
+    # Final test accuracy
+    test_outputs, test_targets, test_techs = test(model, test_loader, device)
+    test_metrics = calculate_metrics(test_outputs, test_targets, techs=test_techs, prefix="test")
 
     formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
-    logger.info(f"Ensemble Test Metrics: {formatted_test_metrics}")
+    logger.info(f'Test metrics: {formatted_test_metrics}')
 
+    if not config["debugging"]["debug"]:
+        wandb.log(test_metrics)
+        wandb.finish()
 
 if __name__ == "__main__":
     main()
