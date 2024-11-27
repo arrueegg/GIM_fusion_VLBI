@@ -67,10 +67,8 @@ class MLPModel(nn.Module):
                 x = self.dropout(x)
 
         x = self.layers[-1](x)  # Output layer
-
         if self.apply_softplus:
-            x = torch.cat((x[:, 0].unsqueeze(1), self.softplus(x[:, 1]).unsqueeze(1)), dim=1)
-        
+            x = torch.cat((self.softplus(x[:, 0].unsqueeze(1)), self.softplus(x[:, 1]).unsqueeze(1)), dim=1)
         return x
 
 # RNN Model

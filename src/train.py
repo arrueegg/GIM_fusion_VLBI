@@ -60,8 +60,15 @@ def train(config, model, dataloader, criterion, optimizer, device):
 
         inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
 
+        #logger.info(inputs)
+        #logger.info(targets)
+
         optimizer.zero_grad()  # Zero the gradients
         outputs = model(inputs).squeeze(-1)  # Forward pass
+
+        #logger.info(outputs[:, 0])
+        #logger.info(outputs[:, 1])
+
         loss = criterion(outputs, targets, tech)  # Compute loss
 
         #calculate_metrics(outputs, targets, tech, prefix="train")
@@ -92,11 +99,6 @@ def validate(model, dataloader, criterion, device):
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
             
             outputs = model(inputs)
-            if outputs.dim() > 1:  # Check if outputs contain VTEC and uncertainty
-                vtec_outputs = outputs[:, 0].squeeze(-1)  # Use only the VTEC part
-            else:
-                vtec_outputs = outputs.squeeze(-1)
-            outputs = outputs.squeeze(-1)
             loss = criterion(outputs, targets, tech)
             
             running_loss += loss.item()
@@ -143,20 +145,23 @@ def main():
     # Initialize dataloaders for train, validation, and test sets
     train_loader, val_loader, test_loader = get_data_loaders(config)
 
-    for x, y, tech in train_loader:
+    """for x, y, tech in train_loader:
         logger.info(f"Trainloader:      Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
-        #logger.info(f"x: {x[0]}, y: {y[0]}, tech: {tech[0]}")
+        logger.info(f"x: {x[0]}, y: {y[0]}")
+        logger.info(f"x: {x[-1]}, y: {y[-1]}")
         break
 
     for x, y, tech in val_loader:
         logger.info(f"Validationloader: Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
-        #logger.info(f"x: {x[0]}, y: {y[0]}, tech: {tech[0]}")
+        logger.info(f"x: {x[0]}, y: {y[0]}")
+        logger.info(f"x: {x[-1]}, y: {y[-1]}")
         break
 
     for x, y, tech in test_loader:
         logger.info(f"Testloader:       Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
-        #logger.info(f"x: {x[0]}, y: {y[0]}, tech: {tech[0]}")
-        break
+        logger.info(f"x: {x[0]}, y: {y[0]}")
+        logger.info(f"x: {x[-1]}, y: {y[-1]}")
+        break"""
 
     # Ensemble configuration
     ensemble_size = config['model']['ensemble_size']
@@ -182,6 +187,8 @@ def main():
                 optimizer, step_size=config["training"]["scheduler_step_size"], 
                 gamma=config["training"]["scheduler_gamma"]
             )
+
+        torch.manual_seed(42)
 
         best_val_loss = float('inf')
         patience_counter = 0
@@ -212,7 +219,7 @@ def main():
 
             logger.info(f"Model {model_seed+1}/{ensemble_size}, Train Loss: {train_loss:.2f}, Validation Loss: {val_loss:.2f}")
 
-            if val_loss < best_val_loss:
+            if val_loss < best_val_loss or config["training"]["save_model_every_epoch"]:
                 patience_counter = 0
                 best_val_loss = save_checkpoint(config, model, optimizer, epoch, val_loss, best_val_loss, model_dir, model_seed)
             else:

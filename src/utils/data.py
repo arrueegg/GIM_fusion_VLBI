@@ -339,9 +339,9 @@ def get_GNSS_data(config):
     test_split = config['training']['test_size']
     
     if config["preprocessing"]["split"] == 'lists':
-        train_dataset = SingleGNSSDataset(config, split='train')
         val_dataset = SingleGNSSDataset(config, split='val')
         test_dataset = SingleGNSSDataset(config, split='test')
+        train_dataset = SingleGNSSDataset(config, split='train')
     else:
         dataset = SingleGNSSDataset(config, split=config['preprocessing']['split'])
         
@@ -378,9 +378,9 @@ def get_data_loaders(config):
         train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_data(config)
         
-        train_dataset = FusionDataset(train_gnss, train_vlbi)
         val_dataset = FusionDataset(val_gnss, val_vlbi)
         test_dataset = FusionDataset(test_gnss, test_vlbi)
+        train_dataset = FusionDataset(train_gnss, train_vlbi)
 
     if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
         # Assuming `train_dataset.data` is a tensor and the last column is the "technique" indicator

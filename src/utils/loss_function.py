@@ -11,16 +11,21 @@ class WeightedLoss(nn.Module):
         self.vlbi_weight = vlbi_weight
     
     def forward(self, outputs, y, technique):
-        # Calculate base loss without weights
         base_loss_value = self.base_loss(outputs, y)
 
+        # Return unweighted loss if weighting is disabled
+        if not self.weighted_loss:
+            return base_loss_value.mean()
+
         # Assign weights based on the technique
+        weights = torch.ones_like(base_loss_value)
         if self.mode == "Fusion" and self.weighted_loss:
             weights = torch.where(technique == 0, self.gnss_weight, self.vlbi_weight)
-        else: 
-            weights = torch.ones_like(base_loss_value)
+        
+        # Normalize weights
+        weights = weights / weights.sum()
 
-        # Apply weights to the base loss
+        # Compute and return weighted loss
         weighted_loss = torch.mean(weights * base_loss_value)
         return weighted_loss
 
@@ -30,8 +35,8 @@ class LaplaceLoss(nn.Module):
     
     def forward(self, outputs, y):
         mu, std = outputs[:, 0], outputs[:, 1]
-        std = std.reshape(-1,) + 1e-6  # Ensure stability with a small constant
-        loss = torch.log(2 * std) + torch.abs(y - mu) / std
+        std = std.reshape(-1,) + 1e-6 
+        loss = torch.mean(torch.log(2 * std) + torch.abs(y - mu) / std)
         return loss 
 
 class GaussianNLLLoss(nn.Module):
