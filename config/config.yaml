@@ -10,14 +10,14 @@ data:
   mode: "GNSS"    # Fusion or GNSS (only GNSS)
   GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
-  columns_to_load:  #['station', 'stec', 'vtec', 'vtec_stddev', 'satres', 'ipplat', 'ipplon', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod'] # List of columns to load or None (no arg) for all columns
+  columns_to_load:  ['station', 'stec', 'vtec', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod', 'dcbs', 'dcbr'] # List of columns to load or None (no arg) for all columns
   shuffle: True
 
 # Preprocessing
 preprocessing:
   elevation: 15.0
   SH_encoding: True
-  SH_degree: 10
+  SH_degree: 8
   split: 'lists'           # random or lists
 
 # Model configuration
@@ -41,7 +41,7 @@ training:
   learning_rate: 0.001
   optimizer: "Adam"        # Optimizer: SGD, Adam, AdamW, RMSprop, Adagrad, Adadelta
   weight_decay: 0
-  loss_function: "LaplaceLoss"  # Loss function: MSELoss, MAELoss, HuberLoss, LaplaceLoss, GaussianNLLLoss
+  loss_function: "GaussianNLLLoss"  # Loss function: MSELoss, MAELoss, HuberLoss, LaplaceLoss, GaussianNLLLoss
   weighted_loss: true      # Whether to use weighted loss
   gnss_loss_weight: 1.0    # GNSS loss weight
   vlbi_loss_weight: 1.0    # VLBI loss weight

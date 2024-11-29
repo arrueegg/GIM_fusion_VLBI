@@ -32,16 +32,35 @@ class SingleGNSSDataset(Dataset):
         return len(self.data)
 
     def load_data(self, data_file):
+
+        if self.split != 'random':
+            sta_list = np.loadtxt(f'./src/data_processing/sit_{self.split}.list', dtype=str)
+            
         data = {}
 
         with h5py.File(data_file, 'r') as h5_file:
+
             # If no specific columns are provided, load all columns
             if self.columns_to_load is None:
                 self.columns_to_load = list(h5_file.keys())  # Load all column names
+            
+            if self.split != 'random':
+                # Load the 'station' column to filter rows first
+                station_column = h5_file['station'][:]
+                station_column = np.array([x.decode('utf-8').upper() if isinstance(x, bytes) else x for x in station_column])
+        
+                # Filter indices for the wanted stations
+                wanted_indices = np.isin(station_column, sta_list)
 
-            # Load the data for the specified columns
-            for column in self.columns_to_load:
-                data[column] = h5_file[column][:]
+                # Load only the filtered rows for each column
+                for column in self.columns_to_load:
+                    data[column] = h5_file[column][wanted_indices]
+
+            else:
+                # Load the data for the specified columns
+                for column in self.columns_to_load:
+                    data[column] = h5_file[column][:]
+
         
         # Convert the dictionary to a DataFrame
         df = pd.DataFrame(data)
@@ -339,9 +358,9 @@ def get_GNSS_data(config):
     test_split = config['training']['test_size']
     
     if config["preprocessing"]["split"] == 'lists':
+        train_dataset = SingleGNSSDataset(config, split='train')
         val_dataset = SingleGNSSDataset(config, split='val')
         test_dataset = SingleGNSSDataset(config, split='test')
-        train_dataset = SingleGNSSDataset(config, split='train')
     else:
         dataset = SingleGNSSDataset(config, split=config['preprocessing']['split'])
         
@@ -378,9 +397,9 @@ def get_data_loaders(config):
         train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_data(config)
         
+        train_dataset = FusionDataset(train_gnss, train_vlbi)
         val_dataset = FusionDataset(val_gnss, val_vlbi)
         test_dataset = FusionDataset(test_gnss, test_vlbi)
-        train_dataset = FusionDataset(train_gnss, train_vlbi)
 
     if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
         # Assuming `train_dataset.data` is a tensor and the last column is the "technique" indicator
