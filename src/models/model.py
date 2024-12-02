@@ -71,19 +71,6 @@ class MLPModel(nn.Module):
             x = torch.cat((self.softplus(x[:, 0].unsqueeze(1)), self.softplus(x[:, 1]).unsqueeze(1)), dim=1)
         return x
 
-# RNN Model
-class RNNModel(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers=1):
-        super(RNNModel, self).__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, output_size)
-
-    def forward(self, x):
-        h0 = torch.zeros(1, x.size(0), self.rnn.hidden_size).to(x.device)  # Initial hidden state
-        out, _ = self.rnn(x, h0)
-        out = self.fc(out[:, -1, :])  # Take the last time step
-        return out
-
 # Model selection function
 def get_model(config):
     model_type = config['model']['model_type']
@@ -92,8 +79,6 @@ def get_model(config):
                         config['model']['hidden_size'], activation=config['model']['activation'], 
                         apply_softplus=config['model']['apply_softplus'], 
                         dropout_prob=config['model']['dropout'])
-    elif model_type == 'RNN':
-        return RNNModel(config['input_size'], config['hidden_size'], config['output_size'])
     else:
         raise ValueError(f"Model type {model_type} is not recognized. Please select from ['MLP', 'RNN']")
 

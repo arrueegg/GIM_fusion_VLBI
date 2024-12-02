@@ -8,6 +8,9 @@ python src/inference_map.py --debug False --year 2023 --doy 010 --mode GNSS --lo
 python src/train.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn MSELoss
 python src/inference_map.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn MSELoss
 
+python src/train.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn GaussianNLLLoss
+python src/inference_map.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn GaussianNLLLoss
+
 python src/train.py --debug False --year 2023 --doy 010 --mode Fusion --loss_fn LaplaceLoss
 python src/inference_map.py --debug False --year 2023 --doy 010 --mode Fusion --loss_fn LaplaceLoss
 

@@ -18,7 +18,7 @@ from models.model import get_model, init_xavier
 from utils.loss_function import get_criterion
 from utils.optimizers import get_optimizer
 from utils.config_parser import parse_config
-from utils.data import get_data_loaders
+from utils.data_SH import get_data_loaders
 from utils.metrics import calculate_metrics
 
 # Logging setup

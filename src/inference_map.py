@@ -9,7 +9,7 @@ import re
 
 from utils.config_parser import parse_config
 from models.model import get_model
-from utils.data import get_data_loaders
+from utils.data_SH import get_data_loaders
 
 import matplotlib.pyplot as plt
 import imageio

@@ -18,7 +18,7 @@ from models.model import get_model, init_xavier
 from utils.loss_function import get_criterion
 from utils.optimizers import get_optimizer
 from utils.config_parser import parse_config
-from utils.data import get_data_loaders
+from utils.data_SH import get_data_loaders
 from utils.metrics import calculate_metrics
 
 # Logging setup
@@ -187,8 +187,6 @@ def main():
                 optimizer, step_size=config["training"]["scheduler_step_size"], 
                 gamma=config["training"]["scheduler_gamma"]
             )
-
-        torch.manual_seed(42)
 
         best_val_loss = float('inf')
         patience_counter = 0
