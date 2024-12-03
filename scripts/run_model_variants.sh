@@ -2,8 +2,8 @@
 
 cd /scratch2/arrueegg/WP2/GIM_fusion_VLBI/
 
-python src/train.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn LaplaceLoss
-python src/inference_map.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn LaplaceLoss
+#python src/train.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn LaplaceLoss
+#python src/inference_map.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn LaplaceLoss
 
 python src/train.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn MSELoss
 python src/inference_map.py --debug False --year 2023 --doy 010 --mode GNSS --loss_fn MSELoss

@@ -87,8 +87,6 @@ class SingleGNSSDataset(Dataset):
 
         # Normalize spatial features
         df.loc[:, 'sm_lon'] = (df['sm_lon'] + 180) % 360 - 180
-        df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
-        df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
 
         # Keep only the necessary columns
         columns_to_keep = ['vtec', 'sm_lat', 'sm_lon', 'sin_utc', 'cos_utc', 'sod_normalize']
@@ -254,10 +252,6 @@ class SingleVLBIDataset(Dataset):
         df.loc[:, 'cos_utc'] = np.cos(df['sod'] / 86400 * 2 * np.pi)
         df.loc[:, 'sod_normalize'] = 2 * df['sod'] / 86400 - 1
 
-        # Normalize spatial features
-        df.loc[:, 'sm_lat'] = (df['sm_lat'] - (-90)) / (90 - (-90)) * 2 - 1
-        df.loc[:, 'sm_lon'] = (df['sm_lon'] - (-180)) / (180 - (-180)) * 2 - 1
-
         # Keep only the necessary columns
         columns_to_keep = ['vtec', 'sm_lat', 'sm_lon', 'sin_utc', 'cos_utc', 'sod_normalize']
         return torch.tensor(df[columns_to_keep].values, dtype=torch.float32)
@@ -343,7 +337,7 @@ class CustomCollateFn:
             other_features = xs[:, 2:]
 
             # Stack lat and lon for the batch
-            lonlat = torch.stack((sm_lon, sm_lat), dim=1)
+            lonlat = torch.stack((sm_lon, sm_lat), dim=-1)
 
             # Compute embeddings for the batch
             embeddings = self.sh_encoder(lonlat)  # Ensure sh_encoder accepts batch inputs
@@ -352,6 +346,8 @@ class CustomCollateFn:
             x = torch.cat([embeddings, other_features], dim=1)
         else:
             # If SH_encoding is False, use the features as they are
+            xs[:, 0] = (xs[:, 0] - (-90)) / (90 - (-90)) * 2 - 1
+            xs[:, 1] = (xs[:, 1] - (-180)) / (180 - (-180)) * 2 - 1
             x = xs  # xs already contains all features
 
         return x, ys, techs

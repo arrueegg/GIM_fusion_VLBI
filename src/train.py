@@ -145,12 +145,12 @@ def main():
     # Initialize dataloaders for train, validation, and test sets
     train_loader, val_loader, test_loader = get_data_loaders(config)
 
-    """for x, y, tech in train_loader:
+    for x, y, tech in train_loader:
         logger.info(f"Trainloader:      Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
         logger.info(f"x: {x[0]}, y: {y[0]}")
         logger.info(f"x: {x[-1]}, y: {y[-1]}")
         break
-
+    """
     for x, y, tech in val_loader:
         logger.info(f"Validationloader: Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
         logger.info(f"x: {x[0]}, y: {y[0]}")
