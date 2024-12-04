@@ -95,8 +95,8 @@ class SingleGNSSDataset(Dataset):
 
     def __getitem__(self, idx):
 
-        x = self.data[idx, 1:]  # All columns except the last one as features
-        y = self.data[idx, 0]   # Last column as the label
+        x = self.data[idx, 1:]  # All columns except the first one as features
+        y = self.data[idx, 0]   # First column as the label
 
         tech = torch.tensor(0, dtype=torch.int64)  # 0 == GNSS
 
@@ -263,8 +263,8 @@ class SingleVLBIDataset(Dataset):
 
     def __getitem__(self, idx):
 
-        x = self.data[idx, 1:]  # All columns except the last one as features
-        y = self.data[idx, 0]   # Last column as the label
+        x = self.data[idx, 1:]  # All columns except the first one as features
+        y = self.data[idx, 0]   # First column as the label
 
         tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
         return x, y, tech
