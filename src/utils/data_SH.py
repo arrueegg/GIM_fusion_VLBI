@@ -1,8 +1,12 @@
 import os
+import stat
 import h5py
 import pandas as pd
 import torch
 import numpy as np
+import tarfile
+import netCDF4 as nc
+import pyproj
 from io import StringIO
 from datetime import datetime, timedelta
 from spacepy.coordinates import Coords
@@ -269,6 +273,218 @@ class SingleVLBIDataset(Dataset):
         tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
         return x, y, tech
     
+class DTECVLBIDataset(Dataset):
+    def __init__(self, config, split='random'):
+        # Load and preprocess your data here
+        self.year = config['year']
+        self.doy = config['doy']
+        self.vlbi_path = config['data']['VLBI_raw_data_path']
+        self.vlbi_types = ['r1', 'r4', 'vo']
+
+        data_paths = self.get_file_path(config)
+        self.split = split
+        self.data = self.load_data(data_paths)
+
+    def __len__(self):
+        return len(self.data)
+    
+    def get_file_path(self, config):
+        temp_dir = "temp"
+        os.makedirs(temp_dir, exist_ok=True)
+
+        date1 = datetime(int(self.year), 1, 1) + timedelta(days=int(self.doy) - 1)
+        date2 = date1 - timedelta(days=1)
+        date_str1 = date1.strftime('%Y%m%d')
+        date_str2 = date2.strftime('%Y%m%d')
+        vlbi_path = os.path.join(config["data"]["VLBI_raw_data_path"], f"{self.year}")
+
+        paths = []
+        for zipfile in os.listdir(vlbi_path):
+            if zipfile.startswith(date_str1) or zipfile.startswith(date_str2):
+                for vlbi_type in self.vlbi_types:
+                    if vlbi_type in zipfile:
+                        zip_path = os.path.join(vlbi_path, zipfile)
+                        with tarfile.open(zip_path, 'r:gz') as tar:
+                            tar.extractall(path=temp_dir)
+                        paths.append(os.path.join(temp_dir, zipfile.split('.')[0]))
+        return paths
+    
+    def read_dTEC(self, path):
+        '''This function reads the ionospheric delays (dTEC) of VGOS or geodetic VLBI observations.'''
+        tech = 'VGOS' if 'vo' in path else 'VLBI' if 'r1' in path or 'r4' in path else None
+
+        try:
+            if tech == 'VGOS':
+                ds = nc.Dataset(os.path.join(path, 'Observables', 'DiffTec.nc'))
+                dtec = ds['diffTec'][:].data
+                dtecstd = ds['diffTecStdDev'][:].data
+            elif tech == 'VLBI':
+                ds = nc.Dataset(os.path.join(path, 'ObsDerived', 'Cal-SlantPathIonoGroup_bX.nc'))
+                dtec = ds['Cal-SlantPathIonoGroup'][:, 0].data
+                dtecstd = ds['Cal-SlantPathIonoGroupSigma'][:, 0].data
+            else:
+                print('Invalid observation type specified')
+                return None, None
+        except Exception as e:
+            print(f'Failed to find/process the file for {path.split("/")[-1]} observations')
+            print(e)
+            return None, None
+        finally:
+            ds.close()
+        
+        return dtec, dtecstd
+
+    def obs_epochs(self, path):
+        '''This function reads the epochs of geodetic VLBI/VGOS observations and returns the seconds of the day (sod) and day of year (doy).'''
+
+        try:
+            t = nc.Dataset(os.path.join(path, 'Observables', 'TimeUTC.nc'))
+        except Exception as e:
+            print('failed to find/process the TimeUTC.nc file')
+            print(e)
+            return None, None
+
+        # Extract the epoch of the observation in hours, minutes, and seconds
+        hours = t['YMDHM'][:, 3].data
+        minutes = t['YMDHM'][:, 4].data
+        seconds = t['Second'][:].data
+
+        # Calculate the seconds of the day (sod)
+        sod = hours * 3600.0 + minutes * 60 + seconds
+
+        # Extract the year, month, and day
+        year = t['YMDHM'][:, 0].data
+        month = t['YMDHM'][:, 1].data
+        day = t['YMDHM'][:, 2].data
+
+        # Calculate the day of year (doy)
+        dates = [datetime(year[i], month[i], day[i]) for i in range(len(year))]
+        doy = np.array([date.timetuple().tm_yday for date in dates])
+
+        # Close the dataset
+        t.close()
+
+        return sod, doy
+
+    def get_ObsCrossRef(self, session_path):
+        ObsCrossRef = nc.Dataset(os.path.join(session_path, 'CrossReference', "ObsCrossRef.nc"), 'r')
+        data = {}
+        for var_name, var in ObsCrossRef.variables.items():
+            data[var_name] = var[:]
+        Obs2Scan = data["Obs2Scan"].data
+        Obs2Baseline = data["Obs2Baseline"].data
+        ObsCrossRef.close()
+        return Obs2Scan, Obs2Baseline
+
+    def get_SourceCrossRef(self, session_path):
+        SourceCrossRef = nc.Dataset(os.path.join(session_path, 'CrossReference', "SourceCrossRef.nc"), 'r')
+        data = {}
+        for var_name, var in SourceCrossRef.variables.items():
+            data[var_name] = var[:]
+        Scan2Source = data["Scan2Source"].data
+        CrossRefSourceList = data["CrossRefSourceList"].data
+        SourceCrossRef.close()
+        return Scan2Source, CrossRefSourceList
+
+    def get_StationCrossRef(self, session_path):
+        StationCrossRef = nc.Dataset(os.path.join(session_path, 'CrossReference', "StationCrossRef.nc"), 'r')
+        data = {}
+        for var_name, var in StationCrossRef.variables.items():
+            data[var_name] = var[:]
+        NumScansPerStation = data['NumScansPerStation'].data
+        CrossRefStationList = data['CrossRefStationList'].data
+        Station2Scan = data['Station2Scan'].data
+        Scan2Station = data['Scan2Station'].data
+
+        StationCrossRef.close()
+
+        stations = []
+        # decode the string back into ASCII
+        for i in range(len(CrossRefStationList[:])):
+            x = []
+            for j in range(len(CrossRefStationList[i, :])):
+                x.append(CrossRefStationList[i, j].decode('UTF-8'))
+            # concatenate the letters
+            stations.append(''.join(x).replace(' ', ''))
+
+        return NumScansPerStation, CrossRefStationList, Station2Scan, Scan2Station, stations
+    
+    def get_station_coords(self, path):
+        try:
+            Station = nc.Dataset(os.path.join(path, 'Apriori/Station.nc'))
+            # extract the station cartesian coordinates (XYZ)
+            stationXYZ = Station['AprioriStationXYZ'][:]
+            
+            # convert the coordinates of the station from XYZ to longitudate, latitude, and altitude
+            # create a tranformation object
+            transformer = pyproj.Transformer.from_crs({"proj": 'geocent', "ellps": 'WGS84', "datum": 'WGS84'},
+                                                    {"proj": 'latlong', "ellps": 'WGS84', "datum": 'WGS84'})
+
+            # latitude, longitude, and altitude order
+            stationLLA = np.zeros(shape=(len(stationXYZ[:]), len(stationXYZ[0, :])))
+
+            # cartesian(XYZ) to georgraphic(LLA) coordinates
+            for n, item in enumerate(stationXYZ[:]):
+                # longitude, latitude, and altitude order
+                stationLLA[n, 1], stationLLA[n, 0], stationLLA[n, 2] = transformer.transform(item[0], item[1], item[2])
+            Station.close()
+        except Exception as e1:
+            print('failed to find/process the Station.nc file')
+            #logger.debug(e1)
+        
+        return stationLLA
+
+    def get_AzEl(self, session_path, stations, Obs2Scan, Obs2Baseline):
+        # Azel: Az Sta1, El Sta1, Az Sta2, El Sta2
+        AzEl = torch.zeros((len(Obs2Baseline), 4))
+        for sta_index, station in enumerate(stations):
+            AzEl = nc.Dataset(os.path.join(session_path, station.upper(), "AzEl.nc"), 'r')
+            data = {}
+            for var_name, var in AzEl.variables.items():
+                data[var_name] = var[:]
+            ElTheo = data['ElTheo'][:].data
+            AzTheo = data['AzTheo'][:].data
+            AzEl.close()
+
+            for i in range(len(Obs2Baseline)):
+                if Obs2Baseline[i, 0] == sta_index + 1:
+                    AzEl[i, 0] = AzTheo[Obs2Scan[i]-1]
+                    AzEl[i, 1] = ElTheo[Obs2Scan[i]-1]
+                elif Obs2Baseline[i, 1] == sta_index + 1:
+                    AzEl[i, 2] = AzTheo[Obs2Scan[i]-1]
+                    AzEl[i, 3] = ElTheo[Obs2Scan[i]-1]
+
+        return AzTheo, ElTheo
+    
+    def load_data(self, data_files):
+        data = pd.DataFrame()
+        if len(data_files) == 0:
+            return data
+        for path in data_files:
+            dtec, dtecstd = self.read_dTEC(path)
+            sod, doy = self.obs_epochs(path)
+            Obs2Scan, Obs2Baseline = self.get_ObsCrossRef(path)
+            #Scan2Source, CrossRefSourceList = self.get_SourceCrossRef(path)
+            NumScansPerStation, CrossRefStationList, Station2Scan, Scan2Station, stations = self.get_StationCrossRef(path)
+            station_coords = self.get_station_coords(path)
+            Az, El = self.get_AzEl(path, stations, Scan2Station, Obs2Baseline)
+
+            # create dataframe with columns: dtec, dtecstd, doy, sod, sta1, sta1_ind, sta1_lat, sta1_lon, sta2, sta2_ind, sta2_lat, sta2_lon
+            data['dtec'] = dtec
+            data['dtecstd'] = dtecstd
+            data['doy'] = doy
+            data['sod'] = sod
+            data['sta1'] = [stations[Obs2Baseline[i, 0]-1] for i in range(len(Obs2Scan))]
+            data['sta1_ind'] = [Obs2Baseline[i, 0] for i in range(len(Obs2Scan))]
+            data['sta1_lat'] = [station_coords[Obs2Baseline[i, 0]-1, 1] for i in range(len(Obs2Scan))]
+            data['sta1_lon'] = [station_coords[Obs2Baseline[i, 0]-1, 0] for i in range(len(Obs2Scan))]
+            data['sta2'] = [stations[Obs2Baseline[i, 1]-1] for i in range(len(Obs2Scan))]
+            data['sta2_ind'] = [Obs2Baseline[i, 1] for i in range(len(Obs2Scan))]
+            data['sta2_lat'] = [station_coords[Obs2Baseline[i, 1]-1, 1] for i in range(len(Obs2Scan))]
+            data['sta2_lon'] = [station_coords[Obs2Baseline[i, 1]-1, 0] for i in range(len(Obs2Scan))]
+
+        return data
+
 class FusionDataset(Dataset):
     def __init__(self, gnss_dataset, vlbi_dataset):
         self.gnss_dataset = gnss_dataset
@@ -314,6 +530,13 @@ def get_VLBI_data(config):
     train_dataset = SingleVLBIDataset(config, split="train")
     val_dataset = SingleVLBIDataset(config, split="val")
     test_dataset = SingleVLBIDataset(config, split="test")
+
+    return train_dataset, val_dataset, test_dataset
+
+def get_VLBI_dtec_data(config):
+    train_dataset = DTECVLBIDataset(config, split="train")
+    val_dataset = DTECVLBIDataset(config, split="val")
+    test_dataset = DTECVLBIDataset(config, split="test")
 
     return train_dataset, val_dataset, test_dataset
 
@@ -375,6 +598,12 @@ def get_data_loaders(config):
         train_dataset = FusionDataset(train_gnss, train_vlbi)
         val_dataset = FusionDataset(val_gnss, val_vlbi)
         test_dataset = FusionDataset(test_gnss, test_vlbi)
+
+    elif config["data"]["mode"] == "DTEC_Fusion":
+        #train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
+        train_vlbi, val_vlbi, test_vlbi = get_VLBI_dtec_data(config)
+
+        # make fusion dataset here somehow
 
     if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
         # Create weights based on the technique

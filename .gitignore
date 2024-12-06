@@ -9,6 +9,7 @@ wandb/
 # Ignore logs and temp files
 *.log
 *.tmp
+temp/
 
 # Ignore specific files
 experiments/
