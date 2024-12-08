@@ -2,6 +2,7 @@ import os
 import stat
 import h5py
 import pandas as pd
+from requests import get
 import torch
 import numpy as np
 import tarfile
@@ -434,9 +435,9 @@ class DTECVLBIDataset(Dataset):
         
         return stationLLA
 
-    def get_AzEl(self, session_path, stations, Obs2Scan, Obs2Baseline):
+    def get_AzEl(self, session_path, stations, Obs2Scan, Scan2Station, Obs2Baseline):
         # Azel: Az Sta1, El Sta1, Az Sta2, El Sta2
-        AzEl = torch.zeros((len(Obs2Baseline), 4))
+        AzEl_obs = np.zeros((len(Obs2Baseline), 4))
         for sta_index, station in enumerate(stations):
             AzEl = nc.Dataset(os.path.join(session_path, station.upper(), "AzEl.nc"), 'r')
             data = {}
@@ -448,14 +449,69 @@ class DTECVLBIDataset(Dataset):
 
             for i in range(len(Obs2Baseline)):
                 if Obs2Baseline[i, 0] == sta_index + 1:
-                    AzEl[i, 0] = AzTheo[Obs2Scan[i]-1]
-                    AzEl[i, 1] = ElTheo[Obs2Scan[i]-1]
+                    AzEl_obs[i, 0] = AzTheo[Scan2Station[Obs2Scan[i]-1, sta_index]-1][0]
+                    AzEl_obs[i, 1] = ElTheo[Scan2Station[Obs2Scan[i]-1, sta_index]-1][0]
                 elif Obs2Baseline[i, 1] == sta_index + 1:
-                    AzEl[i, 2] = AzTheo[Obs2Scan[i]-1]
-                    AzEl[i, 3] = ElTheo[Obs2Scan[i]-1]
+                    AzEl_obs[i, 2] = AzTheo[Scan2Station[Obs2Scan[i]-1, sta_index]-1][0]
+                    AzEl_obs[i, 3] = ElTheo[Scan2Station[Obs2Scan[i]-1, sta_index]-1][0]
 
-        return AzTheo, ElTheo
+        return AzEl_obs
     
+    def get_freq(self, path):
+        EffFreq_bX = nc.Dataset(os.path.join(path, "ObsDerived/EffFreq_bX.nc"))
+        freq = EffFreq_bX['FreqGroupIono'][:].data * 1e6
+        EffFreq_bX.close()
+        return freq
+    
+    def get_SNR(self, path):
+        dsx = nc.Dataset(os.path.join(path, 'Observables/SNR_bX.nc'))
+        s2nrX = dsx['SNR'][:].data
+        dsx.close()
+        
+        try:
+            dss = nc.Dataset(os.path.join(path, 'Observables/SNR_bS.nc'))
+            s2nrS = dss['SNR'][:].data            
+            dss.close()
+        except:
+            s2nrS = s2nrX
+
+        return s2nrX, s2nrS
+    
+    def preprocess(self, data, Scan2Source, Obs2Scan):
+        # Filter data
+
+        # get the indices of the observations from sources that were scanned more than the minObs 
+        """sindx = []
+        Obs2Source = Scan2Source[Obs2Scan - 1]
+        for i in set(Obs2Source):
+            xindx = [j for j in range(len(Obs2Source)) if Obs2Source[j] == i]
+            if len(xindx) > 5:
+                sindx = sindx + xindx"""
+
+        # get the indices of the observatins with a signal to noise ration more than snr
+        snrindxX = [list(data['s2nrX']).index(data['s2nrX'][i]) for i in range(len(data['s2nrX'])) if data['s2nrX'][i] > 15]
+        if len(data['s2nrS'])!=0:
+            snrindxS = [list(data['s2nrS']).index(data['s2nrS'][i]) for i in range(len(data['s2nrS'])) if data['s2nrS'][i] > 15]
+        else :
+            snrindxS = []
+        snrind = list(set(snrindxX + snrindxS))
+
+        dtec0ind = [i for i in range(len(data['dtec'])) if data['dtec'][i] != 0]
+
+        # get the indices of the observations with an elevation angle more than the cut off angle   
+        elind = [i for i in range(len(data['dtec']))
+                    if np.rad2deg(data['El_sta1']) > 15 and np.rad2deg(data['El_sta2']) > 15]
+
+        # get the indices of observations with non-zero standard deviation
+        # obs. w. zero sta. dev. are basically made with the twin telescopes, i.e., Onsala13SW and Onsala13NE, as a baseline
+        std0ind = [i for i in range(len(data['dtecstd'])) if (data['dtecstd'][i] <= 2) and (data['dtecstd'][i] >= 2e-62)] 
+
+        # find the common indices
+        indx = np.intersect1d(dtec0ind, np.intersect1d(snrind, np.intersect1d(elind, std0ind)))
+
+        return data.iloc[indx]
+        
+
     def load_data(self, data_files):
         data = pd.DataFrame()
         if len(data_files) == 0:
@@ -464,24 +520,39 @@ class DTECVLBIDataset(Dataset):
             dtec, dtecstd = self.read_dTEC(path)
             sod, doy = self.obs_epochs(path)
             Obs2Scan, Obs2Baseline = self.get_ObsCrossRef(path)
-            #Scan2Source, CrossRefSourceList = self.get_SourceCrossRef(path)
+            Scan2Source, CrossRefSourceList = self.get_SourceCrossRef(path)
             NumScansPerStation, CrossRefStationList, Station2Scan, Scan2Station, stations = self.get_StationCrossRef(path)
             station_coords = self.get_station_coords(path)
-            Az, El = self.get_AzEl(path, stations, Scan2Station, Obs2Baseline)
+            AzEl = self.get_AzEl(path, stations, Obs2Scan,Scan2Station, Obs2Baseline)
+            freq = self.get_freq(path)
+            s2nrX, s2nrS = self.get_SNR(path)
 
-            # create dataframe with columns: dtec, dtecstd, doy, sod, sta1, sta1_ind, sta1_lat, sta1_lon, sta2, sta2_ind, sta2_lat, sta2_lon
-            data['dtec'] = dtec
-            data['dtecstd'] = dtecstd
+            # create dataframe with columns:    dtec, dtecstd, doy, sod, 
+            #                                   sta1, sta1_ind, sta1_lat, sta1_lon, Az_sta1, El_sta1
+            #                                   sta2, sta2_ind, sta2_lat, sta2_lon, Az_sta2, El_sta2
+            #                                   s2nrX, s2nrS  
+            data['dtec'] = dtec * 299792458 * freq**2 * (10**-16)/ 40.31 # convert to TECU
+            data['dtecstd'] = dtecstd * 299792458 * freq**2 * (10**-16)/ 40.31 
             data['doy'] = doy
             data['sod'] = sod
             data['sta1'] = [stations[Obs2Baseline[i, 0]-1] for i in range(len(Obs2Scan))]
             data['sta1_ind'] = [Obs2Baseline[i, 0] for i in range(len(Obs2Scan))]
             data['sta1_lat'] = [station_coords[Obs2Baseline[i, 0]-1, 1] for i in range(len(Obs2Scan))]
             data['sta1_lon'] = [station_coords[Obs2Baseline[i, 0]-1, 0] for i in range(len(Obs2Scan))]
+            data['Az_sta1'] = [AzEl[i, 0] for i in range(len(Obs2Baseline))]
+            data['El_sta1'] = [AzEl[i, 1] for i in range(len(Obs2Baseline))]
             data['sta2'] = [stations[Obs2Baseline[i, 1]-1] for i in range(len(Obs2Scan))]
             data['sta2_ind'] = [Obs2Baseline[i, 1] for i in range(len(Obs2Scan))]
             data['sta2_lat'] = [station_coords[Obs2Baseline[i, 1]-1, 1] for i in range(len(Obs2Scan))]
             data['sta2_lon'] = [station_coords[Obs2Baseline[i, 1]-1, 0] for i in range(len(Obs2Scan))]
+            data['Az_sta2'] = [AzEl[i, 2] for i in range(len(Obs2Baseline))]
+            data['El_sta2'] = [AzEl[i, 3] for i in range(len(Obs2Baseline))]
+            data['s2nrX'] = s2nrX
+            data['s2nrS'] = s2nrS
+
+        data = self.preprocess(data, Scan2Source, Obs2Scan)
+
+        # add IPP here
 
         return data
 
@@ -604,6 +675,7 @@ def get_data_loaders(config):
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_dtec_data(config)
 
         # make fusion dataset here somehow
+        train_dataset = train_vlbi
 
     if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
         # Create weights based on the technique
