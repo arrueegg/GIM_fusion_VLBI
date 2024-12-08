@@ -1,6 +1,7 @@
 import os
 import stat
 import h5py
+from matplotlib.pylab import f
 import pandas as pd
 from requests import get
 import torch
@@ -499,18 +500,44 @@ class DTECVLBIDataset(Dataset):
         dtec0ind = [i for i in range(len(data['dtec'])) if data['dtec'][i] != 0]
 
         # get the indices of the observations with an elevation angle more than the cut off angle   
-        elind = [i for i in range(len(data['dtec']))
-                    if np.rad2deg(data['El_sta1']) > 15 and np.rad2deg(data['El_sta2']) > 15]
+        elind = np.where(
+            (np.rad2deg(data['El_sta1']) > 15) & (np.rad2deg(data['El_sta2']) > 15)
+        )[0].tolist()
 
         # get the indices of observations with non-zero standard deviation
         # obs. w. zero sta. dev. are basically made with the twin telescopes, i.e., Onsala13SW and Onsala13NE, as a baseline
-        std0ind = [i for i in range(len(data['dtecstd'])) if (data['dtecstd'][i] <= 2) and (data['dtecstd'][i] >= 2e-62)] 
+        std0ind = [i for i in range(len(data['dtecstd'])) if data['dtecstd'][i] != 0]
 
         # find the common indices
         indx = np.intersect1d(dtec0ind, np.intersect1d(snrind, np.intersect1d(elind, std0ind)))
 
         return data.iloc[indx]
         
+    def add_ipp(self, data):
+        # calculate the IPPs
+        # mean radius of earth and ionospheric layer height
+        R, h = 6371.0, 450
+
+        for sta in ['1', '2']:
+            # Bull. Geod. Sci, Articles Section, Curitiba, v. 23, no4, p.669 - 683, Oct - Dec, 2017.
+            # calculate the Earth-centred angle                      
+            Elev = data[f'El_sta{sta}']
+            Psi = np.pi/2 - Elev - np.arcsin(R/(R+h)*np.cos(Elev))
+
+            # compute the latitude of the IPP
+            Az = data[f'Az_sta{sta}']
+            lat = np.deg2rad(data[f'sta{sta}_lat'])      
+            Phi = np.arcsin(np.sin(lat)*np.cos(Psi) + np.cos(lat)*np.sin(Psi)*np.cos(Az))
+
+            # compute the longitude of the IPP
+            lon = np.deg2rad(data[f'sta{sta}_lon'])
+            Lambda = lon + np.arcsin(np.sin(Psi)*np.sin(Az)/np.cos(Phi))
+
+            # save the latitude and the longitude of the ionospheric points
+            data[f'IPP_sta{sta}_lat'] = Phi
+            data[f'IPP_sta{sta}_lon'] = Lambda
+        
+        return data
 
     def load_data(self, data_files):
         data = pd.DataFrame()
@@ -553,6 +580,7 @@ class DTECVLBIDataset(Dataset):
         data = self.preprocess(data, Scan2Source, Obs2Scan)
 
         # add IPP here
+        data = self.add_ipp(data)
 
         return data
 
