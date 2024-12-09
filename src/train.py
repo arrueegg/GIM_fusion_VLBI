@@ -64,12 +64,33 @@ def train(config, model, dataloader, criterion, optimizer, device):
         #logger.info(targets)
 
         optimizer.zero_grad()  # Zero the gradients
+
         outputs = model(inputs).squeeze(-1)  # Forward pass
 
         #logger.info(outputs[:, 0])
         #logger.info(outputs[:, 1])
 
-        loss = criterion(outputs, targets, tech)  # Compute loss
+        # Separate GNSS and VLBI data
+        gnss_mask = tech == 0
+        vlbi_mask = tech == 1
+
+        gnss_outputs = outputs[gnss_mask]
+        gnss_targets = targets[gnss_mask]
+
+        vlbi_outputs = outputs[vlbi_mask]
+        vlbi_targets = targets[vlbi_mask]
+
+        # For VLBI data, subtract subsequent predictions
+        if vlbi_outputs.size(0) > 0:
+            vlbi_outputs = vlbi_outputs[0::2] - vlbi_outputs[1::2]
+            vlbi_targets = vlbi_targets[0::2]
+            tech = tech[0::2]
+
+        # Combine GNSS and VLBI outputs and targets for loss calculation
+        combined_outputs = torch.cat([gnss_outputs, vlbi_outputs])
+        combined_targets = torch.cat([gnss_targets, vlbi_targets])
+
+        loss = criterion(combined_outputs, combined_targets, tech)
 
         #calculate_metrics(outputs, targets, tech, prefix="train")
 
@@ -77,14 +98,14 @@ def train(config, model, dataloader, criterion, optimizer, device):
         optimizer.step()  # Optimize
 
         running_loss += loss.item()
-        all_outputs.append(outputs.detach().cpu())
-        all_targets.append(targets.detach().cpu())
+        all_outputs.append(combined_outputs.detach().cpu())
+        all_targets.append(combined_targets.detach().cpu())
         techs.append(tech.detach().cpu())
 
         if i >= 1 and config["training"]["overfit_single_batch"]:
             break
     
-    avg_loss = running_loss / len(dataloader)
+    avg_loss = running_loss / len(combined_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def validate(model, dataloader, criterion, device):
@@ -144,8 +165,8 @@ def main():
 
     # Initialize dataloaders for train, validation, and test sets
     train_loader, val_loader, test_loader = get_data_loaders(config)
-    """
-    for x, y, tech in train_loader:
+    
+    """for x, y, tech in train_loader:
         logger.info(f"Trainloader:      Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
         logger.info(f"x: {x[0]}, y: {y[0]}")
         logger.info(f"x: {x[-1]}, y: {y[-1]}")

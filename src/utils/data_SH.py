@@ -16,6 +16,9 @@ from spacepy.time import Ticktock
 from torch.utils.data import Dataset, DataLoader, random_split, WeightedRandomSampler
 from utils.locationencoder.pe import SphericalHarmonics
 
+import warnings
+warnings.filterwarnings("ignore")
+
 class SingleGNSSDataset(Dataset):
     def __init__(self, config, split='random'):
         # Load and preprocess your data here
@@ -363,10 +366,13 @@ class DTECVLBIDataset(Dataset):
         dates = [datetime(year[i], month[i], day[i]) for i in range(len(year))]
         doy = np.array([date.timetuple().tm_yday for date in dates])
 
+        # create epoch in datetime format
+        epochs = [datetime(year[i], month[i], day[i], hours[i], minutes[i], int(seconds[i])) for i in range(len(year))]
+
         # Close the dataset
         t.close()
 
-        return sod, doy
+        return sod, doy, epochs
 
     def get_ObsCrossRef(self, session_path):
         ObsCrossRef = nc.Dataset(os.path.join(session_path, 'CrossReference', "ObsCrossRef.nc"), 'r')
@@ -488,6 +494,9 @@ class DTECVLBIDataset(Dataset):
             xindx = [j for j in range(len(Obs2Source)) if Obs2Source[j] == i]
             if len(xindx) > 5:
                 sindx = sindx + xindx"""
+        
+        # filter rows by doy
+        doyind = [i for i in range(len(data['doy'])) if data['doy'][i] == int(self.doy)]
 
         # get the indices of the observatins with a signal to noise ration more than snr
         snrindxX = [list(data['s2nrX']).index(data['s2nrX'][i]) for i in range(len(data['s2nrX'])) if data['s2nrX'][i] > 15]
@@ -509,10 +518,28 @@ class DTECVLBIDataset(Dataset):
         std0ind = [i for i in range(len(data['dtecstd'])) if data['dtecstd'][i] != 0]
 
         # find the common indices
-        indx = np.intersect1d(dtec0ind, np.intersect1d(snrind, np.intersect1d(elind, std0ind)))
+        indx = np.intersect1d(dtec0ind, np.intersect1d(snrind, np.intersect1d(elind, np.intersect1d(std0ind, doyind))))
+        data = data.iloc[indx]
 
-        return data.iloc[indx]
+        # Normalize temporal features
+        data.loc[:, 'sin_utc'] = np.sin(data['sod'] / 86400 * 2 * np.pi)
+        data.loc[:, 'cos_utc'] = np.cos(data['sod'] / 86400 * 2 * np.pi)
+        data.loc[:, 'sod_normalize'] = 2 * data['sod'] / 86400 - 1
+
+        return data
+
+    def coord_tranform(self, lats, lons, epochs):
+        n = lats.shape[0]
+        coords = np.zeros((n, 3))
+        for i in range(n):
+            coords[i] = [1+450/6371, lats[i], lons[i]]
+        coords = list(coords)
+        coord_inp = Coords(coords, 'GEO', 'sph')
+        coord_inp.ticks = Ticktock(epochs, 'UTC')
         
+        coord_out = coord_inp.convert('SM', 'sph')
+        return coord_out
+
     def add_ipp(self, data):
         # calculate the IPPs
         # mean radius of earth and ionospheric layer height
@@ -536,7 +563,11 @@ class DTECVLBIDataset(Dataset):
             # save the latitude and the longitude of the ionospheric points
             data[f'IPP_sta{sta}_lat'] = Phi
             data[f'IPP_sta{sta}_lon'] = Lambda
-        
+
+            coords_sm = self.coord_tranform(np.rad2deg(Phi.tolist()), np.rad2deg(Lambda.tolist()), data['epoch'].tolist())
+            data[f'IPP_sta{sta}_smlat'] = coords_sm.lati.astype(np.float32)
+            data[f'IPP_sta{sta}_smlon'] = coords_sm.long.astype(np.float32)
+
         return data
 
     def load_data(self, data_files):
@@ -545,7 +576,7 @@ class DTECVLBIDataset(Dataset):
             return data
         for path in data_files:
             dtec, dtecstd = self.read_dTEC(path)
-            sod, doy = self.obs_epochs(path)
+            sod, doy, epochs = self.obs_epochs(path)
             Obs2Scan, Obs2Baseline = self.get_ObsCrossRef(path)
             Scan2Source, CrossRefSourceList = self.get_SourceCrossRef(path)
             NumScansPerStation, CrossRefStationList, Station2Scan, Scan2Station, stations = self.get_StationCrossRef(path)
@@ -562,6 +593,7 @@ class DTECVLBIDataset(Dataset):
             data['dtecstd'] = dtecstd * 299792458 * freq**2 * (10**-16)/ 40.31 
             data['doy'] = doy
             data['sod'] = sod
+            data['epoch'] = epochs
             data['sta1'] = [stations[Obs2Baseline[i, 0]-1] for i in range(len(Obs2Scan))]
             data['sta1_ind'] = [Obs2Baseline[i, 0] for i in range(len(Obs2Scan))]
             data['sta1_lat'] = [station_coords[Obs2Baseline[i, 0]-1, 1] for i in range(len(Obs2Scan))]
@@ -582,7 +614,15 @@ class DTECVLBIDataset(Dataset):
         # add IPP here
         data = self.add_ipp(data)
 
-        return data
+        columns_to_keep = ['dtec', 'IPP_sta1_smlat', 'IPP_sta1_smlon', 'IPP_sta2_smlat', 'IPP_sta2_smlon', 'sin_utc', 'cos_utc', 'sod_normalize']
+        return torch.tensor(data[columns_to_keep].values, dtype=torch.float32)
+    
+    def __getitem__(self, idx):
+        x1 = self.data[idx, [1,2,5,6,7]]
+        x2 = self.data[idx, 3:]
+        y = self.data[idx, 0]
+        tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
+        return x1, x2, y, tech
 
 class FusionDataset(Dataset):
     def __init__(self, gnss_dataset, vlbi_dataset):
@@ -600,6 +640,25 @@ class FusionDataset(Dataset):
         else:
             x, y, tech = self.vlbi_dataset[idx - len(self.gnss_dataset)]
         return x, y, tech
+    
+class FusionDTECDataset(Dataset):
+    def __init__(self, gnss_dataset, vlbi_dataset):
+        self.gnss_dataset = gnss_dataset
+        self.vlbi_dataset = vlbi_dataset
+        self.total_len = len(gnss_dataset) + len(vlbi_dataset)
+        self.indices = list(range(self.total_len))
+    
+    def __len__(self):
+        return self.total_len
+    
+    def __getitem__(self, idx):
+        if idx < len(self.gnss_dataset):
+            x, y, tech = self.gnss_dataset[idx]
+            return x, y, tech 
+        else:
+            x1, x2, y, tech = self.vlbi_dataset[idx - len(self.gnss_dataset)]
+            return (x1, x2), y, tech
+        
 
 def get_GNSS_data(config):
     test_split = config['training']['test_size']
@@ -639,7 +698,7 @@ def get_VLBI_dtec_data(config):
 
     return train_dataset, val_dataset, test_dataset
 
-class CustomCollateFn:
+class CollateWithSH:
     def __init__(self, sh_degree, sh_encoding):
         self.sh_degree = sh_degree
         self.sh_encoding = sh_encoding
@@ -674,7 +733,74 @@ class CustomCollateFn:
 
         return x, ys, techs
 
+class CollateDTEC:
+    def __init__(self, sh_degree, sh_encoding):
+        self.sh_degree = sh_degree
+        self.sh_encoding = sh_encoding
+        if self.sh_encoding:
+            self.sh_encoder = SphericalHarmonics(legendre_polys=sh_degree)
 
+    def __call__(self, batch):
+        gnss_batch = [item for item in batch if isinstance(item[0], torch.Tensor)]
+        vlbi_batch = [item for item in batch if isinstance(item[0], tuple)]
+
+        if gnss_batch:
+            gnss_xs, gnss_ys, gnss_techs = zip(*gnss_batch)
+            gnss_xs = torch.stack(gnss_xs)
+            gnss_ys = torch.stack(gnss_ys)
+            gnss_techs = torch.stack(gnss_techs)
+
+            if self.sh_encoding:
+                sm_lat = gnss_xs[:, 0]
+                sm_lon = gnss_xs[:, 1]
+                other_features = gnss_xs[:, 2:]
+                lonlat = torch.stack((sm_lon, sm_lat), dim=-1)
+                embeddings = self.sh_encoder(lonlat)
+                gnss_xs = torch.cat([embeddings, other_features], dim=1)
+
+        if vlbi_batch:
+            vlbi_xs1, vlbi_xs2, vlbi_ys, vlbi_techs = zip(*[(x1, x2, y, tech) for (x1, x2), y, tech in vlbi_batch])
+            vlbi_xs1 = torch.stack(vlbi_xs1)
+            vlbi_xs2 = torch.stack(vlbi_xs2)
+            vlbi_ys = torch.stack(vlbi_ys)
+            vlbi_techs = torch.stack(vlbi_techs)
+
+            if self.sh_encoding:
+                sm_lat1 = vlbi_xs1[:, 0]
+                sm_lon1 = vlbi_xs1[:, 1]
+                other_features1 = vlbi_xs1[:, 2:]
+                lonlat1 = torch.stack((sm_lon1, sm_lat1), dim=-1)
+                embeddings1 = self.sh_encoder(lonlat1)
+                vlbi_xs1 = torch.cat([embeddings1, other_features1], dim=1)
+
+                sm_lat2 = vlbi_xs2[:, 0]
+                sm_lon2 = vlbi_xs2[:, 1]
+                other_features2 = vlbi_xs2[:, 2:]
+                lonlat2 = torch.stack((sm_lon2, sm_lat2), dim=-1)
+                embeddings2 = self.sh_encoder(lonlat2)
+                vlbi_xs2 = torch.cat([embeddings2, other_features2], dim=1)
+
+            # Interleave vlbi_xs1 and vlbi_xs2
+            vlbi_xs = torch.empty((vlbi_xs1.size(0) * 2, vlbi_xs1.size(1)), dtype=vlbi_xs1.dtype)
+            vlbi_xs[0::2] = vlbi_xs1
+            vlbi_xs[1::2] = vlbi_xs2
+            vlbi_y = torch.empty((vlbi_ys.size(0) * 2), dtype=vlbi_ys.dtype)
+            vlbi_y[0::2] = vlbi_ys
+            vlbi_y[1::2] = vlbi_ys
+            vlbi_tech = torch.empty((vlbi_techs.size(0) * 2), dtype=vlbi_techs.dtype)
+            vlbi_tech[0::2] = vlbi_techs
+            vlbi_tech[1::2] = vlbi_techs
+
+        if gnss_batch and vlbi_batch:
+            xs = torch.cat([gnss_xs, vlbi_xs], dim=0)
+            ys = torch.cat([gnss_ys, vlbi_y], dim=0)
+            techs = torch.cat([gnss_techs, vlbi_tech], dim=0)
+        elif gnss_batch:
+            xs, ys, techs = gnss_xs, gnss_ys, gnss_techs
+        else:
+            xs, ys, techs = vlbi_xs, vlbi_y, vlbi_tech
+
+        return xs, ys, techs
 
 def get_data_loaders(config):
     batch_size = config['training']['batchsize']
@@ -684,7 +810,10 @@ def get_data_loaders(config):
 
 
     # Create an instance of the collate function with sh_degree
-    collate_fn = CustomCollateFn(sh_degree, sh_encoding)
+    if config["data"]["mode"] == "DTEC_Fusion":
+        collate_fn = CollateDTEC(sh_degree, sh_encoding)
+    else:
+        collate_fn = CollateWithSH(sh_degree, sh_encoding)
 
     if config["data"]["mode"] == "GNSS":
         train_dataset, val_dataset, test_dataset = get_GNSS_data(config)
@@ -699,11 +828,13 @@ def get_data_loaders(config):
         test_dataset = FusionDataset(test_gnss, test_vlbi)
 
     elif config["data"]["mode"] == "DTEC_Fusion":
-        #train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
+        train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_dtec_data(config)
 
         # make fusion dataset here somehow
-        train_dataset = train_vlbi
+        train_dataset = FusionDTECDataset(train_gnss, train_vlbi)
+        val_dataset = FusionDTECDataset(val_gnss, val_vlbi)
+        test_dataset = FusionDTECDataset(test_gnss, test_vlbi)
 
     if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
         # Create weights based on the technique
