@@ -76,19 +76,22 @@ def train(config, model, dataloader, criterion, optimizer, device):
 
         gnss_outputs = outputs[gnss_mask]
         gnss_targets = targets[gnss_mask]
+        gnss_tech = tech[gnss_mask]
 
         vlbi_outputs = outputs[vlbi_mask]
         vlbi_targets = targets[vlbi_mask]
+        vlbi_tech = tech[vlbi_mask]
 
         # For VLBI data, subtract subsequent predictions
         if vlbi_outputs.size(0) > 0:
-            vlbi_outputs = vlbi_outputs[0::2] - vlbi_outputs[1::2]
+            vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
             vlbi_targets = vlbi_targets[0::2]
-            tech = tech[0::2]
+            vlbi_tech = vlbi_tech[0::2]
 
         # Combine GNSS and VLBI outputs and targets for loss calculation
         combined_outputs = torch.cat([gnss_outputs, vlbi_outputs])
         combined_targets = torch.cat([gnss_targets, vlbi_targets])
+        tech = torch.cat([gnss_tech, vlbi_tech])
 
         loss = criterion(combined_outputs, combined_targets, tech)
 
@@ -118,16 +121,40 @@ def validate(model, dataloader, criterion, device):
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
+
+            outputs = model(inputs).squeeze(-1)
             
-            outputs = model(inputs)
-            loss = criterion(outputs, targets, tech)
+            # Separate GNSS and VLBI data
+            gnss_mask = tech == 0
+            vlbi_mask = tech == 1
+
+            gnss_outputs = outputs[gnss_mask]
+            gnss_targets = targets[gnss_mask]
+            gnss_tech = tech[gnss_mask]
+
+            vlbi_outputs = outputs[vlbi_mask]
+            vlbi_targets = targets[vlbi_mask]
+            vlbi_tech = tech[vlbi_mask]
+
+            # For VLBI data, subtract subsequent predictions
+            if vlbi_outputs.size(0) > 0:
+                vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+                vlbi_targets = vlbi_targets[0::2]
+                vlbi_tech = vlbi_tech[0::2]
+
+            # Combine GNSS and VLBI outputs and targets for loss calculation
+            combined_outputs = torch.cat([gnss_outputs, vlbi_outputs])
+            combined_targets = torch.cat([gnss_targets, vlbi_targets])
+            tech = torch.cat([gnss_tech, vlbi_tech])
+
+            loss = criterion(combined_outputs, combined_targets, tech)
             
             running_loss += loss.item()
-            all_outputs.append(outputs.cpu())
-            all_targets.append(targets.cpu())
+            all_outputs.append(combined_outputs.cpu())
+            all_targets.append(combined_targets.cpu())
             techs.append(tech.cpu())
     
-    avg_loss = running_loss / len(dataloader)
+    avg_loss = running_loss / len(combined_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def test(model, dataloader, device):
@@ -139,15 +166,34 @@ def test(model, dataloader, device):
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
+
+            outputs = model(inputs).squeeze(-1)
             
-            outputs = model(inputs)
-            if outputs.dim() > 1:
-                outputs = outputs[:, 0]
-                
-            outputs = outputs.squeeze(-1)
-            
-            all_outputs.append(outputs.cpu())
-            all_targets.append(targets.cpu())
+            # Separate GNSS and VLBI data
+            gnss_mask = tech == 0
+            vlbi_mask = tech == 1
+
+            gnss_outputs = outputs[gnss_mask]
+            gnss_targets = targets[gnss_mask]
+            gnss_tech = tech[gnss_mask]
+
+            vlbi_outputs = outputs[vlbi_mask]
+            vlbi_targets = targets[vlbi_mask]
+            vlbi_tech = tech[vlbi_mask]
+
+            # For VLBI data, subtract subsequent predictions
+            if vlbi_outputs.size(0) > 0:
+                vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+                vlbi_targets = vlbi_targets[0::2]
+                vlbi_tech = vlbi_tech[0::2]
+
+            # Combine GNSS and VLBI outputs and targets
+            combined_outputs = torch.cat([gnss_outputs, vlbi_outputs])
+            combined_targets = torch.cat([gnss_targets, vlbi_targets])
+            tech = torch.cat([gnss_tech, vlbi_tech])
+
+            all_outputs.append(combined_outputs.cpu())
+            all_targets.append(combined_targets.cpu())
             techs.append(tech.cpu())
     
     return torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)

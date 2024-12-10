@@ -20,7 +20,7 @@ class WeightedLoss(nn.Module):
 
         # Assign weights based on the technique
         weights = torch.ones_like(base_loss_value)
-        if self.mode == "Fusion" and self.weighted_loss:
+        if (self.mode == "Fusion" or self.mode =="DTEC_Fusion") and self.weighted_loss:
             weights = torch.where(technique == 0, self.gnss_weight, self.vlbi_weight)
 
         # Apply weights to per-sample losses

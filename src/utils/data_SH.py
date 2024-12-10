@@ -836,7 +836,7 @@ def get_data_loaders(config):
         val_dataset = FusionDTECDataset(val_gnss, val_vlbi)
         test_dataset = FusionDTECDataset(test_gnss, test_vlbi)
 
-    if config["training"]["vlbi_sampling_weight"] != 1.0 and config["data"]["mode"] == "Fusion":
+    if config["training"]["vlbi_sampling_weight"] != 1.0 and (config["data"]["mode"] == "Fusion" or config["data"]["mode"] == "DTEC_Fusion"):
         # Create weights based on the technique
         vlbi_weight = config["training"]["vlbi_sampling_weight"]
         total_len = len(train_dataset)
