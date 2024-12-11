@@ -83,7 +83,7 @@ def train(config, model, dataloader, criterion, optimizer, device):
         vlbi_tech = tech[vlbi_mask]
 
         # For VLBI data, subtract subsequent predictions
-        if vlbi_outputs.size(0) > 0:
+        if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
             vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
             vlbi_targets = vlbi_targets[0::2]
             vlbi_tech = vlbi_tech[0::2]
@@ -111,7 +111,7 @@ def train(config, model, dataloader, criterion, optimizer, device):
     avg_loss = running_loss / len(combined_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
-def validate(model, dataloader, criterion, device):
+def validate(config, model, dataloader, criterion, device):
     model.eval()
     running_loss = 0.0
     all_outputs = []
@@ -137,7 +137,7 @@ def validate(model, dataloader, criterion, device):
             vlbi_tech = tech[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
-            if vlbi_outputs.size(0) > 0:
+            if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
                 vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
                 vlbi_targets = vlbi_targets[0::2]
                 vlbi_tech = vlbi_tech[0::2]
@@ -157,7 +157,7 @@ def validate(model, dataloader, criterion, device):
     avg_loss = running_loss / len(combined_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
-def test(model, dataloader, device):
+def test(config, model, dataloader, device):
     model.eval()
     all_outputs = []
     all_targets = []
@@ -182,7 +182,7 @@ def test(model, dataloader, device):
             vlbi_tech = tech[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
-            if vlbi_outputs.size(0) > 0:
+            if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
                 vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
                 vlbi_targets = vlbi_targets[0::2]
                 vlbi_tech = vlbi_tech[0::2]
@@ -264,7 +264,7 @@ def main():
             
             train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, device)
             if not config["training"]["overfit_single_batch"]:
-                val_loss, val_outputs, val_targets, val_techs = validate(model, val_loader, criterion, device)
+                val_loss, val_outputs, val_targets, val_techs = validate(config, model, val_loader, criterion, device)
             else:
                 val_loss = best_val_loss
 
@@ -298,7 +298,7 @@ def main():
         model.load_state_dict(checkpoint['model_state_dict'])
 
         # Final test accuracy
-        test_outputs, test_targets, test_techs = test(model, test_loader, device)
+        test_outputs, test_targets, test_techs = test(config, model, test_loader, device)
         test_metrics = calculate_metrics(test_outputs, test_targets, techs=test_techs, prefix="test")
 
         formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
@@ -310,23 +310,22 @@ def main():
     # Ensemble testing
     logger.info("Testing ensemble models...")
     all_predictions = []
+    all_targets = []
+    all_techs = []
     for model_seed in range(ensemble_size):
         # Load best model for final testing
         checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'), weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
-        outputs, _, _ = test(model, test_loader, device)
+        outputs, targets, tech = test(config, model, test_loader, device)
         all_predictions.append(outputs)
+        all_targets.append(targets)
+        all_techs.append(tech)
 
     # Combine predictions (e.g., average for regression)
     ensemble_predictions = torch.mean(torch.stack(all_predictions), dim=0)
 
-    # Calculate metrics for ensemble predictions
-    test_targets_techs = torch.cat([torch.stack((y, tech), dim=0) for _, y, tech in test_loader], dim=1)
-    #Separate targets and techniques
-    targets = test_targets_techs[0, :]
-    techniques = test_targets_techs[1, :]
     # Calculate metrics
-    test_metrics = calculate_metrics(ensemble_predictions, targets, techniques, prefix="test")
+    test_metrics = calculate_metrics(ensemble_predictions, all_targets[0], all_techs[0], prefix="test")
 
     formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
     logger.info(f"Ensemble Test Metrics: {formatted_test_metrics}")
