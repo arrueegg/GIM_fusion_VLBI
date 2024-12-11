@@ -20,6 +20,7 @@ from utils.optimizers import get_optimizer
 from utils.config_parser import parse_config
 from utils.data_SH import get_data_loaders
 from utils.metrics import calculate_metrics
+from utils.mapping_function import MappingFunction as MF
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -48,7 +49,7 @@ def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkp
     }, os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'))
     return val_loss
 
-def train(config, model, dataloader, criterion, optimizer, device):
+def train(config, model, dataloader, criterion, optimizer, mf, device):
     model.train()
     running_loss = 0.0
 
@@ -59,6 +60,7 @@ def train(config, model, dataloader, criterion, optimizer, device):
     for i, (inputs, targets, tech) in tqdm(enumerate(dataloader), total=len(dataloader)):
 
         inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
+        inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
 
         #logger.info(inputs)
         #logger.info(targets)
@@ -81,10 +83,13 @@ def train(config, model, dataloader, criterion, optimizer, device):
         vlbi_outputs = outputs[vlbi_mask]
         vlbi_targets = targets[vlbi_mask]
         vlbi_tech = tech[vlbi_mask]
+        vlbi_elev = elev[vlbi_mask]
 
         # For VLBI data, subtract subsequent predictions
         if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
-            vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+            mfs = mf(vlbi_elev)
+            vlbi_out1_mapped, vlbi_out2_mapped = vlbi_outputs[0::2, 0] * mfs[0::2], vlbi_outputs[1::2, 0] * mfs[1::2]
+            vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
             vlbi_targets = vlbi_targets[0::2]
             vlbi_tech = vlbi_tech[0::2]
 
@@ -111,7 +116,7 @@ def train(config, model, dataloader, criterion, optimizer, device):
     avg_loss = running_loss / len(combined_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
-def validate(config, model, dataloader, criterion, device):
+def validate(config, model, dataloader, criterion, mf, device):
     model.eval()
     running_loss = 0.0
     all_outputs = []
@@ -121,6 +126,7 @@ def validate(config, model, dataloader, criterion, device):
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
+            inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
 
             outputs = model(inputs).squeeze(-1)
             
@@ -135,10 +141,13 @@ def validate(config, model, dataloader, criterion, device):
             vlbi_outputs = outputs[vlbi_mask]
             vlbi_targets = targets[vlbi_mask]
             vlbi_tech = tech[vlbi_mask]
+            vlbi_elev = elev[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
             if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
-                vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+                mfs = mf(vlbi_elev)
+                vlbi_out1_mapped, vlbi_out2_mapped = vlbi_outputs[0::2, 0] * mfs[0::2], vlbi_outputs[1::2, 0] * mfs[1::2]
+                vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
                 vlbi_targets = vlbi_targets[0::2]
                 vlbi_tech = vlbi_tech[0::2]
 
@@ -157,7 +166,7 @@ def validate(config, model, dataloader, criterion, device):
     avg_loss = running_loss / len(combined_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
-def test(config, model, dataloader, device):
+def test(config, model, dataloader, mf, device):
     model.eval()
     all_outputs = []
     all_targets = []
@@ -166,6 +175,7 @@ def test(config, model, dataloader, device):
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
+            inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
 
             outputs = model(inputs).squeeze(-1)
             
@@ -180,10 +190,13 @@ def test(config, model, dataloader, device):
             vlbi_outputs = outputs[vlbi_mask]
             vlbi_targets = targets[vlbi_mask]
             vlbi_tech = tech[vlbi_mask]
+            vlbi_elev = elev[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
             if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
-                vlbi_outputs = torch.stack((vlbi_outputs[0::2, 0] - vlbi_outputs[1::2, 0], (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+                mfs = mf(vlbi_elev)
+                vlbi_out1_mapped, vlbi_out2_mapped = vlbi_outputs[0::2, 0] * mfs[0::2], vlbi_outputs[1::2, 0] * mfs[1::2]
+                vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
                 vlbi_targets = vlbi_targets[0::2]
                 vlbi_tech = vlbi_tech[0::2]
 
@@ -248,6 +261,7 @@ def main():
         init_xavier(model, activation=config["model"]["activation"], model_seed=model_seed)
         criterion = get_criterion(config)
         optimizer = get_optimizer(config, model.parameters())
+        mf = MF.mslm
         scheduler = config["training"]["scheduler"]
         if scheduler:
             scheduler = torch.optim.lr_scheduler.StepLR(
@@ -262,9 +276,9 @@ def main():
         for epoch in range(config["training"]["epochs"]):
             logger.info(f"Model {model_seed+1}/{ensemble_size}, Epoch {epoch+1}/{config['training']['epochs']}")
             
-            train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, device)
+            train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, mf, device)
             if not config["training"]["overfit_single_batch"]:
-                val_loss, val_outputs, val_targets, val_techs = validate(config, model, val_loader, criterion, device)
+                val_loss, val_outputs, val_targets, val_techs = validate(config, model, val_loader, criterion, mf, device)
             else:
                 val_loss = best_val_loss
 
@@ -298,7 +312,7 @@ def main():
         model.load_state_dict(checkpoint['model_state_dict'])
 
         # Final test accuracy
-        test_outputs, test_targets, test_techs = test(config, model, test_loader, device)
+        test_outputs, test_targets, test_techs = test(config, model, test_loader, mf, device)
         test_metrics = calculate_metrics(test_outputs, test_targets, techs=test_techs, prefix="test")
 
         formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
@@ -316,7 +330,7 @@ def main():
         # Load best model for final testing
         checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'), weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
-        outputs, targets, tech = test(config, model, test_loader, device)
+        outputs, targets, tech = test(config, model, test_loader, mf, device)
         all_predictions.append(outputs)
         all_targets.append(targets)
         all_techs.append(tech)

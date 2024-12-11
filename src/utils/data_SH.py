@@ -99,6 +99,8 @@ class SingleGNSSDataset(Dataset):
 
         # Keep only the necessary columns
         columns_to_keep = ['vtec', 'sm_lat', 'sm_lon', 'sin_utc', 'cos_utc', 'sod_normalize']
+        if self.mode == 'DTEC_Fusion':
+            columns_to_keep.append('satele')
         return torch.tensor(df[columns_to_keep].values, dtype=torch.float32)
 
 
@@ -614,12 +616,12 @@ class DTECVLBIDataset(Dataset):
         # add IPP here
         data = self.add_ipp(data)
 
-        columns_to_keep = ['dtec', 'IPP_sta1_smlat', 'IPP_sta1_smlon', 'IPP_sta2_smlat', 'IPP_sta2_smlon', 'sin_utc', 'cos_utc', 'sod_normalize']
+        columns_to_keep = ['dtec', 'IPP_sta1_smlat', 'IPP_sta1_smlon', 'IPP_sta2_smlat', 'IPP_sta2_smlon', 'sin_utc', 'cos_utc', 'sod_normalize', 'El_sta1', 'El_sta2']
         return torch.tensor(data[columns_to_keep].values, dtype=torch.float32)
     
     def __getitem__(self, idx):
-        x1 = self.data[idx, [1,2,5,6,7]]
-        x2 = self.data[idx, 3:]
+        x1 = self.data[idx, [1,2,5,6,7,8]]
+        x2 = self.data[idx, [3,4,5,6,7,9]]
         y = self.data[idx, 0]
         tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
         return x1, x2, y, tech
