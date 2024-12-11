@@ -84,7 +84,8 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
         vlbi_outputs = outputs[vlbi_mask]
         vlbi_targets = targets[vlbi_mask]
         vlbi_tech = tech[vlbi_mask]
-        vlbi_elev = elev[vlbi_mask]
+        if config["data"]["mode"] == "DTEC_Fusion":
+            vlbi_elev = elev[vlbi_mask]
 
         # For VLBI data, subtract subsequent predictions
         if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
@@ -114,7 +115,7 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
         if i >= 1 and config["training"]["overfit_single_batch"]:
             break
     
-    avg_loss = running_loss / len(combined_targets)
+    avg_loss = running_loss / len(all_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def validate(config, model, dataloader, criterion, mf, device):
@@ -143,7 +144,8 @@ def validate(config, model, dataloader, criterion, mf, device):
             vlbi_outputs = outputs[vlbi_mask]
             vlbi_targets = targets[vlbi_mask]
             vlbi_tech = tech[vlbi_mask]
-            vlbi_elev = elev[vlbi_mask]
+            if config["data"]["mode"] == "DTEC_Fusion":
+                vlbi_elev = elev[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
             if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
@@ -165,7 +167,7 @@ def validate(config, model, dataloader, criterion, mf, device):
             all_targets.append(combined_targets.cpu())
             techs.append(tech.cpu())
     
-    avg_loss = running_loss / len(combined_targets)
+    avg_loss = running_loss / len(all_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def test(config, model, dataloader, mf, device):
@@ -193,7 +195,8 @@ def test(config, model, dataloader, mf, device):
             vlbi_outputs = outputs[vlbi_mask]
             vlbi_targets = targets[vlbi_mask]
             vlbi_tech = tech[vlbi_mask]
-            vlbi_elev = elev[vlbi_mask]
+            if config["data"]["mode"] == "DTEC_Fusion":
+                vlbi_elev = elev[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
             if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
