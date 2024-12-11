@@ -23,7 +23,7 @@ preprocessing:
 
 # Model configuration
 model:
-  ensemble_size: 1
+  ensemble_size: 5
   model_type: "MLP"
   input_size: 39           # Input feature size
   hidden_size: [90,90,90]    # Hidden layer size
@@ -35,7 +35,7 @@ model:
 # Training configuration
 training:
   test_size: 0.2          # Proportion of data to use for testing
-  epochs: 5
+  epochs: 50
   batchsize: 512
   vlbi_sampling_weight: 1.0   # Weight for VLBI data sampling relative to GNSS data. Set to 1.0 for no weighting. higher weighting means sampled more frequently
   num_workers: 8

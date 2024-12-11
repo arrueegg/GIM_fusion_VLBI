@@ -60,7 +60,8 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
     for i, (inputs, targets, tech) in tqdm(enumerate(dataloader), total=len(dataloader)):
 
         inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
-        inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
+        if config["data"]["mode"] == "DTEC_Fusion":
+            inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
 
         #logger.info(inputs)
         #logger.info(targets)
@@ -126,7 +127,8 @@ def validate(config, model, dataloader, criterion, mf, device):
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
-            inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
+            if config["data"]["mode"] == "DTEC_Fusion":
+                inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
 
             outputs = model(inputs).squeeze(-1)
             
@@ -175,7 +177,8 @@ def test(config, model, dataloader, mf, device):
     with torch.no_grad():
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
-            inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
+            if config["data"]["mode"] == "DTEC_Fusion":
+                inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
 
             outputs = model(inputs).squeeze(-1)
             

@@ -38,7 +38,7 @@ class SingleGNSSDataset(Dataset):
     def load_data(self, data_file):
 
         if self.split != 'random':
-            sta_list = np.loadtxt(f'./src/data_processing/sit_{self.split}.list', dtype=str)
+            sta_list = np.loadtxt(f'./src/data_processing/{self.split}.list', dtype=str)
             
         data = {}
 
@@ -78,7 +78,7 @@ class SingleGNSSDataset(Dataset):
         df['station'] = df['station'].apply(lambda x: x.decode('utf-8').upper() if isinstance(x, bytes) else x)
 
         if self.split != 'random':
-            sta_list = np.loadtxt(f'./src/data_processing/sit_{self.split}.list', dtype=str)
+            sta_list = np.loadtxt(f'./src/data_processing/{self.split}.list', dtype=str)
             df = df[df['station'].isin(sta_list)]
 
         # Filter data
