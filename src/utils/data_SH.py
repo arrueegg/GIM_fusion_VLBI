@@ -694,9 +694,24 @@ def get_VLBI_data(config):
     return train_dataset, val_dataset, test_dataset
 
 def get_VLBI_dtec_data(config):
-    train_dataset = DTECVLBIDataset(config, split="train")
-    val_dataset = DTECVLBIDataset(config, split="val")
-    test_dataset = DTECVLBIDataset(config, split="test")
+    test_split = config['training']['test_size']
+    dataset = DTECVLBIDataset(config, split='')
+
+    if config["preprocessing"]["split"] == 'lists':
+        total_size = len(dataset)
+        val_size = 0
+        test_size = 0
+        train_size = total_size - val_size - test_size
+    else:
+        train_val_split = 1 - test_split
+        val_split = 0.2 * train_val_split
+        total_size = len(dataset)
+        val_size = int(val_split * total_size)
+        test_size = int(test_split * total_size)
+        train_size = total_size - val_size - test_size
+
+    # Split the dataset into train, validation, and test sets
+    train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
 
     return train_dataset, val_dataset, test_dataset
 
