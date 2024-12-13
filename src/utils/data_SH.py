@@ -101,6 +101,8 @@ class SingleGNSSDataset(Dataset):
         columns_to_keep = ['vtec', 'sm_lat', 'sm_lon', 'sin_utc', 'cos_utc', 'sod_normalize']
         if self.mode == 'DTEC_Fusion':
             columns_to_keep.append('satele')
+            columns_to_keep.append('station')
+            df['station'] = -1
         return torch.tensor(df[columns_to_keep].values, dtype=torch.float32)
 
 
@@ -291,6 +293,7 @@ class DTECVLBIDataset(Dataset):
         data_paths = self.get_file_path(config)
         self.split = split
         self.data = self.load_data(data_paths)
+        self.stations = self.get_station_list(data_paths)
 
     def __len__(self):
         return len(self.data)
@@ -418,6 +421,13 @@ class DTECVLBIDataset(Dataset):
             stations.append(''.join(x).replace(' ', ''))
 
         return NumScansPerStation, CrossRefStationList, Station2Scan, Scan2Station, stations
+
+    def get_station_list(self, data_paths):
+        stations = []
+        for path in data_paths:
+            _, _, _, _, sta = self.get_StationCrossRef(path)
+            stations += sta
+        return stations
     
     def get_station_coords(self, path):
         try:
@@ -597,13 +607,13 @@ class DTECVLBIDataset(Dataset):
             data['sod'] = sod
             data['epoch'] = epochs
             data['sta1'] = [stations[Obs2Baseline[i, 0]-1] for i in range(len(Obs2Scan))]
-            data['sta1_ind'] = [Obs2Baseline[i, 0] for i in range(len(Obs2Scan))]
+            data['sta1_ind'] = [Obs2Baseline[i, 0]-1 for i in range(len(Obs2Scan))]
             data['sta1_lat'] = [station_coords[Obs2Baseline[i, 0]-1, 1] for i in range(len(Obs2Scan))]
             data['sta1_lon'] = [station_coords[Obs2Baseline[i, 0]-1, 0] for i in range(len(Obs2Scan))]
             data['Az_sta1'] = [AzEl[i, 0] for i in range(len(Obs2Baseline))]
             data['El_sta1'] = [AzEl[i, 1] for i in range(len(Obs2Baseline))]
             data['sta2'] = [stations[Obs2Baseline[i, 1]-1] for i in range(len(Obs2Scan))]
-            data['sta2_ind'] = [Obs2Baseline[i, 1] for i in range(len(Obs2Scan))]
+            data['sta2_ind'] = [Obs2Baseline[i, 1]-1 for i in range(len(Obs2Scan))]
             data['sta2_lat'] = [station_coords[Obs2Baseline[i, 1]-1, 1] for i in range(len(Obs2Scan))]
             data['sta2_lon'] = [station_coords[Obs2Baseline[i, 1]-1, 0] for i in range(len(Obs2Scan))]
             data['Az_sta2'] = [AzEl[i, 2] for i in range(len(Obs2Baseline))]
@@ -616,12 +626,12 @@ class DTECVLBIDataset(Dataset):
         # add IPP here
         data = self.add_ipp(data)
 
-        columns_to_keep = ['dtec', 'IPP_sta1_smlat', 'IPP_sta1_smlon', 'IPP_sta2_smlat', 'IPP_sta2_smlon', 'sin_utc', 'cos_utc', 'sod_normalize', 'El_sta1', 'El_sta2']
+        columns_to_keep = ['dtec', 'IPP_sta1_smlat', 'IPP_sta1_smlon', 'IPP_sta2_smlat', 'IPP_sta2_smlon', 'sin_utc', 'cos_utc', 'sod_normalize', 'sta1_ind', 'sta2_ind', 'El_sta1', 'El_sta2']
         return torch.tensor(data[columns_to_keep].values, dtype=torch.float32)
     
     def __getitem__(self, idx):
-        x1 = self.data[idx, [1,2,5,6,7,8]]
-        x2 = self.data[idx, [3,4,5,6,7,9]]
+        x1 = self.data[idx, [1,2,5,6,7,8,10]]
+        x2 = self.data[idx, [3,4,5,6,7,9,11]]
         y = self.data[idx, 0]
         tech = torch.tensor(1, dtype=torch.int64)  # 1 == VLBI
         return x1, x2, y, tech
@@ -879,3 +889,7 @@ def get_data_loaders(config):
                              num_workers=config["training"]["num_workers"], collate_fn=collate_fn)
 
     return train_loader, val_loader, test_loader
+
+def get_stations(config):
+    dataset = DTECVLBIDataset(config, split='')
+    return dataset.stations

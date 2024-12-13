@@ -35,7 +35,7 @@ model:
 # Training configuration
 training:
   test_size: 0.2          # Proportion of data to use for testing
-  epochs: 50
+  epochs: 30
   batchsize: 512
   vlbi_sampling_weight: 1.0   # Weight for VLBI data sampling relative to GNSS data. Set to 1.0 for no weighting. higher weighting means sampled more frequently
   num_workers: 8

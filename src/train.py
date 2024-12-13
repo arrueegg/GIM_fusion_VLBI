@@ -18,7 +18,7 @@ from models.model import get_model, init_xavier
 from utils.loss_function import get_criterion
 from utils.optimizers import get_optimizer
 from utils.config_parser import parse_config
-from utils.data_SH import get_data_loaders
+from utils.data_SH import get_data_loaders, get_stations
 from utils.metrics import calculate_metrics
 from utils.mapping_function import MappingFunction as MF
 
@@ -49,7 +49,7 @@ def save_checkpoint(config, model, optimizer, epoch, val_loss, best_loss, checkp
     }, os.path.join(checkpoint_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'))
     return val_loss
 
-def train(config, model, dataloader, criterion, optimizer, mf, device):
+def train(config, model, vlbi_offsets, dataloader, criterion, optimizer, mf, device):
     model.train()
     running_loss = 0.0
 
@@ -61,17 +61,10 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
 
         inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
         if config["data"]["mode"] == "DTEC_Fusion":
-            inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
-
-        #logger.info(inputs)
-        #logger.info(targets)
+            inputs, sta_ind, elev = inputs[:, :-2], inputs[:, -2], inputs[:, -1]  # Separate elevation data
 
         optimizer.zero_grad()  # Zero the gradients
-
         outputs = model(inputs).squeeze(-1)  # Forward pass
-
-        #logger.info(outputs[:, 0])
-        #logger.info(outputs[:, 1])
 
         # Separate GNSS and VLBI data
         gnss_mask = tech == 0
@@ -86,12 +79,15 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
         vlbi_tech = tech[vlbi_mask]
         if config["data"]["mode"] == "DTEC_Fusion":
             vlbi_elev = elev[vlbi_mask]
+            vlbi_sta_ind = sta_ind[vlbi_mask]
 
         # For VLBI data, subtract subsequent predictions
         if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
+            #instr_offsets_adjusted = vlbi_offsets - vlbi_offsets.mean()
+            instr_offset1, instr_offset2 = vlbi_offsets[vlbi_sta_ind[0::2].long()], vlbi_offsets[vlbi_sta_ind[1::2].long()]
             mfs = mf(vlbi_elev)
             vlbi_out1_mapped, vlbi_out2_mapped = vlbi_outputs[0::2, 0] * mfs[0::2], vlbi_outputs[1::2, 0] * mfs[1::2]
-            vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+            vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped + instr_offset2 - instr_offset1, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
             vlbi_targets = vlbi_targets[0::2]
             vlbi_tech = vlbi_tech[0::2]
 
@@ -101,8 +97,7 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
         tech = torch.cat([gnss_tech, vlbi_tech])
 
         loss = criterion(combined_outputs, combined_targets, tech)
-
-        #calculate_metrics(outputs, targets, tech, prefix="train")
+        loss += torch.sum(vlbi_offsets) ** 2
 
         loss.backward()  # Backward pass
         optimizer.step()  # Optimize
@@ -114,11 +109,12 @@ def train(config, model, dataloader, criterion, optimizer, mf, device):
 
         if i >= 1 and config["training"]["overfit_single_batch"]:
             break
-    
+
+    print(f"Instr Offsets: {vlbi_offsets.data}")
     avg_loss = running_loss / len(all_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
-def validate(config, model, dataloader, criterion, mf, device):
+def validate(config, model, vlbi_offsets, dataloader, criterion, mf, device):
     model.eval()
     running_loss = 0.0
     all_outputs = []
@@ -129,7 +125,7 @@ def validate(config, model, dataloader, criterion, mf, device):
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
             if config["data"]["mode"] == "DTEC_Fusion":
-                inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
+                inputs, sta_ind, elev = inputs[:, :-2], inputs[:, -2], inputs[:, -1]  # Separate elevation data
 
             outputs = model(inputs).squeeze(-1)
             
@@ -146,12 +142,14 @@ def validate(config, model, dataloader, criterion, mf, device):
             vlbi_tech = tech[vlbi_mask]
             if config["data"]["mode"] == "DTEC_Fusion":
                 vlbi_elev = elev[vlbi_mask]
+                vlbi_sta_ind = sta_ind[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
             if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
+                instr_offset1, instr_offset2 = vlbi_offsets[vlbi_sta_ind[0::2]], vlbi_offsets[vlbi_sta_ind[1::2]]
                 mfs = mf(vlbi_elev)
                 vlbi_out1_mapped, vlbi_out2_mapped = vlbi_outputs[0::2, 0] * mfs[0::2], vlbi_outputs[1::2, 0] * mfs[1::2]
-                vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+                vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped + instr_offset2 - instr_offset1, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
                 vlbi_targets = vlbi_targets[0::2]
                 vlbi_tech = vlbi_tech[0::2]
 
@@ -170,7 +168,7 @@ def validate(config, model, dataloader, criterion, mf, device):
     avg_loss = running_loss / len(all_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
-def test(config, model, dataloader, mf, device):
+def test(config, model, vlbi_offsets, dataloader, mf, device):
     model.eval()
     all_outputs = []
     all_targets = []
@@ -180,7 +178,7 @@ def test(config, model, dataloader, mf, device):
         for inputs, targets, tech in dataloader:
             inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
             if config["data"]["mode"] == "DTEC_Fusion":
-                inputs, elev = inputs[:, :-1], inputs[:, -1]  # Separate elevation data
+                inputs, sta_ind, elev = inputs[:, :-2], inputs[:, -2], inputs[:, -1]
 
             outputs = model(inputs).squeeze(-1)
             
@@ -197,12 +195,14 @@ def test(config, model, dataloader, mf, device):
             vlbi_tech = tech[vlbi_mask]
             if config["data"]["mode"] == "DTEC_Fusion":
                 vlbi_elev = elev[vlbi_mask]
+                vlbi_sta_ind = sta_ind[vlbi_mask]
 
             # For VLBI data, subtract subsequent predictions
             if vlbi_outputs.size(0) > 0 and config["data"]["mode"] == "DTEC_Fusion":
+                instr_offset1, instr_offset2 = vlbi_offsets[vlbi_sta_ind[0::2]], vlbi_offsets[vlbi_sta_ind[1::2]]
                 mfs = mf(vlbi_elev)
                 vlbi_out1_mapped, vlbi_out2_mapped = vlbi_outputs[0::2, 0] * mfs[0::2], vlbi_outputs[1::2, 0] * mfs[1::2]
-                vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
+                vlbi_outputs = torch.stack((vlbi_out1_mapped - vlbi_out2_mapped + instr_offset2 - instr_offset1, (vlbi_outputs[0::2, 1] + vlbi_outputs[1::2, 1]) / 2), dim=1)
                 vlbi_targets = vlbi_targets[0::2]
                 vlbi_tech = vlbi_tech[0::2]
 
@@ -230,6 +230,10 @@ def main():
 
     # Initialize dataloaders for train, validation, and test sets
     train_loader, val_loader, test_loader = get_data_loaders(config)
+    if config["data"]["mode"] == "DTEC_Fusion":
+        vlbi_stations = get_stations(config)
+    else:
+        vlbi_stations = []
     
     """for x, y, tech in train_loader:
         logger.info(f"Trainloader:      Shape of x: {x.shape}, Shape of y: {y.shape}, Shape of tech: {tech.shape}")
@@ -265,8 +269,9 @@ def main():
         # Initialize model, criterion, optimizer
         model = get_model(config).to(device)
         init_xavier(model, activation=config["model"]["activation"], model_seed=model_seed)
+        instr_offsets = torch.nn.Parameter(torch.zeros(len(vlbi_stations)).to(device), requires_grad=True)
         criterion = get_criterion(config)
-        optimizer = get_optimizer(config, model.parameters())
+        optimizer = get_optimizer(config, list(model.parameters()) + [instr_offsets])
         mf = MF.mslm
         scheduler = config["training"]["scheduler"]
         if scheduler:
@@ -282,9 +287,9 @@ def main():
         for epoch in range(config["training"]["epochs"]):
             logger.info(f"Model {model_seed+1}/{ensemble_size}, Epoch {epoch+1}/{config['training']['epochs']}")
             
-            train_loss, train_outputs, train_targets, train_techs = train(config, model, train_loader, criterion, optimizer, mf, device)
+            train_loss, train_outputs, train_targets, train_techs = train(config, model, instr_offsets, train_loader, criterion, optimizer, mf, device)
             if not config["training"]["overfit_single_batch"]:
-                val_loss, val_outputs, val_targets, val_techs = validate(config, model, val_loader, criterion, mf, device)
+                val_loss, val_outputs, val_targets, val_techs = validate(config, model, instr_offsets, val_loader, criterion, mf, device)
             else:
                 val_loss = best_val_loss
 
@@ -318,7 +323,7 @@ def main():
         model.load_state_dict(checkpoint['model_state_dict'])
 
         # Final test accuracy
-        test_outputs, test_targets, test_techs = test(config, model, test_loader, mf, device)
+        test_outputs, test_targets, test_techs = test(config, model, instr_offsets, test_loader, mf, device)
         test_metrics = calculate_metrics(test_outputs, test_targets, techs=test_techs, prefix="test")
 
         formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
@@ -336,7 +341,7 @@ def main():
         # Load best model for final testing
         checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'), weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
-        outputs, targets, tech = test(config, model, test_loader, mf, device)
+        outputs, targets, tech = test(config, model, instr_offsets, test_loader, mf, device)
         all_predictions.append(outputs)
         all_targets.append(targets)
         all_techs.append(tech)
