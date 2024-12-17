@@ -477,9 +477,15 @@ class DTECVLBIDataset(Dataset):
         return AzEl_obs
     
     def get_freq(self, path):
-        EffFreq_bX = nc.Dataset(os.path.join(path, "ObsDerived/EffFreq_bX.nc"))
-        freq = EffFreq_bX['FreqGroupIono'][:].data * 1e6
-        EffFreq_bX.close()
+        # get the freq in MHz and convert it to Hz
+        if os.path.exists(os.path.join(path, 'ObsDerived/EffFreq_bX.nc')):
+            ds = nc.Dataset(os.path.join(path, 'ObsDerived/EffFreq_bX.nc'))
+            freq = ds['FreqGroupIono'][:].data
+        else:
+            ds = nc.Dataset(os.path.join(path, 'Observables/RefFreq_bX.nc'))
+            freq = ds['RefFreq'][:].data
+            freq = freq * 1e6
+        ds.close()
         return freq
     
     def get_SNR(self, path):
@@ -587,6 +593,7 @@ class DTECVLBIDataset(Dataset):
         if len(data_files) == 0:
             return data
         for path in data_files:
+            current_data = pd.DataFrame()
             dtec, dtecstd = self.read_dTEC(path)
             sod, doy, epochs = self.obs_epochs(path)
             Obs2Scan, Obs2Baseline = self.get_ObsCrossRef(path)
@@ -601,25 +608,27 @@ class DTECVLBIDataset(Dataset):
             #                                   sta1, sta1_ind, sta1_lat, sta1_lon, Az_sta1, El_sta1
             #                                   sta2, sta2_ind, sta2_lat, sta2_lon, Az_sta2, El_sta2
             #                                   s2nrX, s2nrS  
-            data['dtec'] = dtec * 299792458 * freq**2 * (10**-16)/ 40.31 # convert to TECU
-            data['dtecstd'] = dtecstd * 299792458 * freq**2 * (10**-16)/ 40.31 
-            data['doy'] = doy
-            data['sod'] = sod
-            data['epoch'] = epochs
-            data['sta1'] = [stations[Obs2Baseline[i, 0]-1] for i in range(len(Obs2Scan))]
-            data['sta1_ind'] = [Obs2Baseline[i, 0]-1 for i in range(len(Obs2Scan))]
-            data['sta1_lat'] = [station_coords[Obs2Baseline[i, 0]-1, 1] for i in range(len(Obs2Scan))]
-            data['sta1_lon'] = [station_coords[Obs2Baseline[i, 0]-1, 0] for i in range(len(Obs2Scan))]
-            data['Az_sta1'] = [AzEl[i, 0] for i in range(len(Obs2Baseline))]
-            data['El_sta1'] = [AzEl[i, 1] for i in range(len(Obs2Baseline))]
-            data['sta2'] = [stations[Obs2Baseline[i, 1]-1] for i in range(len(Obs2Scan))]
-            data['sta2_ind'] = [Obs2Baseline[i, 1]-1 for i in range(len(Obs2Scan))]
-            data['sta2_lat'] = [station_coords[Obs2Baseline[i, 1]-1, 1] for i in range(len(Obs2Scan))]
-            data['sta2_lon'] = [station_coords[Obs2Baseline[i, 1]-1, 0] for i in range(len(Obs2Scan))]
-            data['Az_sta2'] = [AzEl[i, 2] for i in range(len(Obs2Baseline))]
-            data['El_sta2'] = [AzEl[i, 3] for i in range(len(Obs2Baseline))]
-            data['s2nrX'] = s2nrX
-            data['s2nrS'] = s2nrS
+            current_data['dtec'] = dtec * 299792458 * freq**2 * (10**-16)/ 40.31 # convert to TECU
+            current_data['dtecstd'] = dtecstd * 299792458 * freq**2 * (10**-16)/ 40.31 
+            current_data['doy'] = doy
+            current_data['sod'] = sod
+            current_data['epoch'] = epochs
+            current_data['sta1'] = [stations[Obs2Baseline[i, 0]-1] for i in range(len(Obs2Scan))]
+            current_data['sta1_ind'] = [Obs2Baseline[i, 0]-1 for i in range(len(Obs2Scan))]
+            current_data['sta1_lat'] = [station_coords[Obs2Baseline[i, 0]-1, 1] for i in range(len(Obs2Scan))]
+            current_data['sta1_lon'] = [station_coords[Obs2Baseline[i, 0]-1, 0] for i in range(len(Obs2Scan))]
+            current_data['Az_sta1'] = [AzEl[i, 0] for i in range(len(Obs2Baseline))]
+            current_data['El_sta1'] = [AzEl[i, 1] for i in range(len(Obs2Baseline))]
+            current_data['sta2'] = [stations[Obs2Baseline[i, 1]-1] for i in range(len(Obs2Scan))]
+            current_data['sta2_ind'] = [Obs2Baseline[i, 1]-1 for i in range(len(Obs2Scan))]
+            current_data['sta2_lat'] = [station_coords[Obs2Baseline[i, 1]-1, 1] for i in range(len(Obs2Scan))]
+            current_data['sta2_lon'] = [station_coords[Obs2Baseline[i, 1]-1, 0] for i in range(len(Obs2Scan))]
+            current_data['Az_sta2'] = [AzEl[i, 2] for i in range(len(Obs2Baseline))]
+            current_data['El_sta2'] = [AzEl[i, 3] for i in range(len(Obs2Baseline))]
+            current_data['s2nrX'] = s2nrX
+            current_data['s2nrS'] = s2nrS
+
+            data = pd.concat([data, current_data], ignore_index=True)
 
         data = self.preprocess(data, Scan2Source, Obs2Scan)
 

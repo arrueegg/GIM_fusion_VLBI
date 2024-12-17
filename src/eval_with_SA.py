@@ -55,7 +55,7 @@ def prepare_inputs(sa_data, device, sh_encoder):
     inputs = torch.cat([inputs, sin_utc.unsqueeze(1), cos_utc.unsqueeze(1), sod_normalized.unsqueeze(1)], dim=1)
     return inputs
 
-def evaluate_results(sa_data, predictions):
+def evaluate_results(sa_data, predictions, config):
     """
     Compare model predictions to ground truth from the SA dataset.
 
@@ -69,6 +69,9 @@ def evaluate_results(sa_data, predictions):
     results = sa_data.copy()
     results['model_prediction'] = predictions[:, 0]
     results['uncertainty'] = predictions[:, 1] if predictions.shape[1] > 1 else np.nan
+    out_path = os.path.join(config['output_dir'], 'SA_plots')
+    os.makedirs(out_path, exist_ok=True)
+    results.to_csv(os.path.join(out_path, "results.csv"), index=False)
     return results
 
 def plot_results(config, results, metrics):
@@ -169,7 +172,7 @@ def main():
     ensemble_predictions = np.array(ensemble_predictions)
     mean_predictions = np.mean(ensemble_predictions, axis=0)
     
-    results = evaluate_results(sa_data, mean_predictions)
+    results = evaluate_results(sa_data, mean_predictions, config)
 
     logger.info("Calculating metrics")
     metrics = calculate_metrics(results)
