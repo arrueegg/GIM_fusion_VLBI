@@ -88,7 +88,8 @@ def inference(config, model, device, lat_dim=71, lon_dim=73, interval=3600):
             # Extract VTEC predictions and uncertainties
             if config['training']['loss_function'] == 'LaplaceLoss' or config['training']['loss_function'] == 'GaussianNLLLoss':
                 vtec_pred, uncertainty = outputs[:, 0], outputs[:, 1]
-                uncertainty = 2 * uncertainty ** 2
+                uncertainty = uncertainty + 1e-6
+                #uncertainty = 2 * uncertainty ** 2
             else:
                 vtec_pred = outputs
                 uncertainty = torch.zeros_like(vtec_pred)
@@ -233,20 +234,25 @@ def main():
         ensemble_uncertainty.append(uncertainty)
 
     # Aggregate ensemble predictions
-    mean_vtec = np.mean(ensemble_vtec, axis=0)
-    mean_vtec_unc = np.mean(ensemble_uncertainty, axis=0)
-    mean_vtec_squared = np.mean(np.square(ensemble_vtec), axis=0)
-    var_vtec = mean_vtec_squared - mean_vtec**2 + mean_vtec_unc
+    mean_vtec = np.mean(ensemble_vtec, axis=0)  # Ensemble mean
+    mean_vtec_squared = np.square(mean_vtec)  # Square of the mean
+    # Compute mean of squared predictions and uncertainties
+    mean_prediction_term = np.mean([np.square(v) for v in ensemble_vtec], axis=0)
+    mean_uncertainty_term = np.mean([2 * np.square(unc) for unc in ensemble_uncertainty], axis=0)
+
+    # Variance aggregation
+    var_vtec = mean_prediction_term + mean_uncertainty_term - mean_vtec_squared
+    std_vtec = np.sqrt(var_vtec)
 
     # Save aggregated predictions
     os.makedirs(f"{config['output_dir']}/maps", exist_ok=True)
     np.save(f"{config['output_dir']}/maps/mean_vtec_preds_{config['year']}_{config['doy']}.npy", mean_vtec)
-    np.save(f"{config['output_dir']}/maps/var_vtec_preds_{config['year']}_{config['doy']}.npy", var_vtec)
+    np.save(f"{config['output_dir']}/maps/std_vtec_preds_{config['year']}_{config['doy']}.npy", std_vtec)
     logger.info("Inference completed.")
 
     # Plot results
-    plot_mean(config, mean_vtec, var_vtec, lat_dim, lon_dim)
-    plot_epoch(config, mean_vtec, var_vtec, lat_dim, lon_dim, interval)
+    plot_mean(config, mean_vtec, std_vtec, lat_dim, lon_dim)
+    plot_epoch(config, mean_vtec, std_vtec, lat_dim, lon_dim, interval)
     # plot_epoch_animation(config, mean_vtec, var_vtec, lat_dim, lon_dim, interval)
 
     create_gif_from_images(config)
