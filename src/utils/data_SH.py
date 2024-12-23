@@ -321,17 +321,22 @@ class DTECVLBIDataset(Dataset):
     
     def read_dTEC(self, path):
         '''This function reads the ionospheric delays (dTEC) of VGOS or geodetic VLBI observations.'''
+
+        freq = self.get_freq(path)
         tech = 'VGOS' if 'vo' in path else 'VLBI' if 'r1' in path or 'r4' in path else None
 
         try:
             if tech == 'VGOS':
                 ds = nc.Dataset(os.path.join(path, 'Observables', 'DiffTec.nc'))
                 dtec = ds['diffTec'][:].data
+                dtec = -dtec
                 dtecstd = ds['diffTecStdDev'][:].data
             elif tech == 'VLBI':
                 ds = nc.Dataset(os.path.join(path, 'ObsDerived', 'Cal-SlantPathIonoGroup_bX.nc'))
                 dtec = ds['Cal-SlantPathIonoGroup'][:, 0].data
                 dtecstd = ds['Cal-SlantPathIonoGroupSigma'][:, 0].data
+                dtec = dtec * 299792458 * freq**2 * (10**-16)/ 40.31 # convert to TECU
+                dtecstd = dtecstd * 299792458 * freq**2 * (10**-16)/ 40.31
             else:
                 print('Invalid observation type specified')
                 return None, None
@@ -601,15 +606,14 @@ class DTECVLBIDataset(Dataset):
             NumScansPerStation, CrossRefStationList, Station2Scan, Scan2Station, stations = self.get_StationCrossRef(path)
             station_coords = self.get_station_coords(path)
             AzEl = self.get_AzEl(path, stations, Obs2Scan,Scan2Station, Obs2Baseline)
-            freq = self.get_freq(path)
             s2nrX, s2nrS = self.get_SNR(path)
 
             # create dataframe with columns:    dtec, dtecstd, doy, sod, 
             #                                   sta1, sta1_ind, sta1_lat, sta1_lon, Az_sta1, El_sta1
             #                                   sta2, sta2_ind, sta2_lat, sta2_lon, Az_sta2, El_sta2
             #                                   s2nrX, s2nrS  
-            current_data['dtec'] = dtec * 299792458 * freq**2 * (10**-16)/ 40.31 # convert to TECU
-            current_data['dtecstd'] = dtecstd * 299792458 * freq**2 * (10**-16)/ 40.31 
+            current_data['dtec'] = dtec
+            current_data['dtecstd'] = dtecstd
             current_data['doy'] = doy
             current_data['sod'] = sod
             current_data['epoch'] = epochs
