@@ -116,7 +116,7 @@ def plot_results(config, results, metrics):
     plt.close()
     
 
-def calculate_metrics(results):
+def calculate_metrics(config, results):
     """
     Calculate evaluation metrics for model predictions.
 
@@ -128,6 +128,10 @@ def calculate_metrics(results):
     """
     rmse = np.sqrt(np.mean((results['model_prediction'] - results['vtec']) ** 2))
     mae = np.mean(np.abs(results['model_prediction'] - results['vtec']))
+    metrics_path = os.path.join(config['output_dir'], 'SA_plots', 'metrics.txt')
+    with open(metrics_path, 'w') as f:
+        f.write(f"RMSE: {rmse, 2}\n")
+        f.write(f"MAE: {mae, 2}\n")
     return {"RMSE": round(rmse, 2), "MAE": round(mae, 2)}
 
 def main():
@@ -175,7 +179,7 @@ def main():
     results = evaluate_results(sa_data, mean_predictions, config)
 
     logger.info("Calculating metrics")
-    metrics = calculate_metrics(results)
+    metrics = calculate_metrics(config, results)
     logger.info(f"Metrics: {metrics}")
 
     logger.info("Generating plots")

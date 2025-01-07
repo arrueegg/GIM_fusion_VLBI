@@ -7,7 +7,7 @@ random_seed: 42
 
 # Data configuration
 data:
-  mode: "DTEC_Fusion"    # Fusion or GNSS (only GNSS) or DTEC_Fusion
+  mode: "GNSS"    # Fusion or GNSS (only GNSS) or DTEC_Fusion
   GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
   VLBI_raw_data_path: "/home/ggl/data/space/vlbi/ivsdata/vgosdb/"
