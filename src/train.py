@@ -352,7 +352,7 @@ def main():
     # Calculate metrics
     test_metrics = calculate_metrics(ensemble_predictions, all_targets[0], all_techs[0], prefix="test")
 
-    formatted_test_metrics = {k: f"{v:.2f}" for k, v in test_metrics.items()}
+    formatted_test_metrics = {k: f'{v:.2f}' for k, v in test_metrics.items()}
     logger.info(f"Ensemble Test Metrics: {formatted_test_metrics}")
 
 
