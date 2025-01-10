@@ -17,6 +17,7 @@ module load eth_proxy
 main_dir="/cluster/work/igp_psr/arrueegg/GIM_fusion_VLBI/"
 year=$1
 doy=$2
+config_path="config/config_cluster.yaml"
 
 source ${main_dir}/env/bin/activate
-bash ${main_dir}/scripts/run_dtec.sh $year $doy
+bash ${main_dir}/scripts/run_dtec.sh $year $doy $config_path
