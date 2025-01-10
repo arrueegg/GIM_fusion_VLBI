@@ -9,7 +9,7 @@
 module load stack/2024-06 python_cuda/3.11.6
 module load eth_proxy
 
-main_dir="/cluster/work/igp_psr/arrueegg/GIM_fusion_VLBI/"
+main_dir="/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/"
 year=$1
 doy=$2
 config_path="config/config_cluster.yaml"
