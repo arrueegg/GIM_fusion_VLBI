@@ -1,5 +1,8 @@
 #!/bin/bash
 
+cd /cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/
+source env/bin/activate
+
 # Path to the DOY list file
 DOY_LIST_FILE="lists/Unified_doy_list.txt"
 
