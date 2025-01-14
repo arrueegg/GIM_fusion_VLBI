@@ -218,6 +218,8 @@ def test(config, model, vlbi_offsets, dataloader, mf, device):
     return torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
 def main():
+    logger.info(f"num threads {torch.get_num_threads()}")  # Number of threads PyTorch is using
+    logger.info(f"inter-op threads {torch.get_num_interop_threads()}")  # For inter-op parallelism
     config = parse_config()
     logger.info(f"Starting ensemble training with {config['model']['ensemble_size']} member/s")
 

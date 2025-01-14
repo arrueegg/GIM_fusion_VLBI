@@ -1,10 +1,9 @@
 #!/bin/bash
 
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
-#SBATCH --mem-per-cpu=1024
-#SBATCH --gpus=0
+#SBATCH --mem-per-cpu=4G
 #SBATCH --output=/cluster/work/igp_psr/arrueegg/WP2/logs/slurm_ML-%j.out
 
 module load stack/2024-06 python_cuda/3.11.6
