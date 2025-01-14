@@ -34,18 +34,18 @@ while IFS= read -r line; do
     if [[ "$START_YEAR" -eq "$END_YEAR" ]]; then
         if [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" && "$line_doy" -le "$END_DOY" ]]; then
             echo "submit: $line_year $line_doy"
-            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
+            sbatch submit_cluster.sh "$line_year $line_doy"
         fi
     else
         if [[ "$line_year" -gt "$START_YEAR" && "$line_year" -lt "$END_YEAR" ]]; then
             echo "submit: $line_year $line_doy"
-            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
+            sbatch submit_cluster.sh "$line_year $line_doy"
         elif [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" ]]; then
             echo "submit: $line_year $line_doy"
-            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
+            sbatch submit_cluster.sh "$line_year $line_doy"
         elif [[ "$line_year" -eq "$END_YEAR" && "$line_doy" -le "$END_DOY" ]]; then
             echo "submit: $line_year $line_doy"
-            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
+            sbatch submit_cluster.sh "$line_year $line_doy"
         fi
     fi
 done < "$DOY_LIST_FILE"

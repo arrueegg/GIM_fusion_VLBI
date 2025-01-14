@@ -15,5 +15,6 @@ year=$1
 doy=$2
 config_path="config/config_cluster.yaml"
 
+cd $main_dir
 source ${main_dir}/env/bin/activate
 bash ${main_dir}/scripts/run_dtec.sh $year $doy $config_path
