@@ -57,7 +57,7 @@ def train(config, model, vlbi_offsets, dataloader, criterion, optimizer, mf, dev
     all_targets = []
     techs = []
 
-    for i, (inputs, targets, tech) in tqdm(enumerate(dataloader), total=len(dataloader)):
+    for i, (inputs, targets, tech) in tqdm(enumerate(dataloader), total=len(dataloader), disable=config["debugging"]["disable_tqdm"]):
 
         inputs, targets, tech = inputs.to(device), targets.to(device), tech.to(device)
         if config["data"]["mode"] == "DTEC_Fusion":
