@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=24
 #SBATCH --time=24:00:00
-#SBATCH --mem-per-cpu=3G
-#SBATCH --hint=nomultithread
+#SBATCH --mem-per-cpu=1G
 #SBATCH --output=/cluster/work/igp_psr/arrueegg/WP2/logs/slurm_ML-%j.out
 
-export OMP_NUM_THREADS=8
+#export OMP_NUM_THREADS=24
+#export OPENBLAS_NUM_THREADS=24
 
 module load stack/2024-06 python_cuda/3.11.6
 module load eth_proxy

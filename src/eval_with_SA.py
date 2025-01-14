@@ -130,8 +130,8 @@ def calculate_metrics(config, results):
     mae = np.mean(np.abs(results['model_prediction'] - results['vtec']))
     metrics_path = os.path.join(config['output_dir'], 'SA_plots', 'metrics.txt')
     with open(metrics_path, 'w') as f:
-        f.write(f"RMSE: {rmse, 2}\n")
-        f.write(f"MAE: {mae, 2}\n")
+        f.write(f"RMSE: {rmse}\n")
+        f.write(f"MAE: {mae}\n")
     return {"RMSE": round(rmse, 2), "MAE": round(mae, 2)}
 
 def main():

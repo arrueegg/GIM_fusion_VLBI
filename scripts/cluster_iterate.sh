@@ -3,8 +3,6 @@
 cd /cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/
 source ../env/bin/activate
 
-export OMP_NUM_THREADS=12
-
 # Path to the DOY list file
 DOY_LIST_FILE="lists/Unified_doy_list.txt"
 
