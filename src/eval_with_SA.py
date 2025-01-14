@@ -146,7 +146,7 @@ def main():
     logger = logging.getLogger()
 
     csv_file = '/home/ggl/mnt/ggltmp/4Arno/sa_dataset.csv'
-    if config['data']['GNSS_data_path'].split('/')[0]=="cluster":
+    if "cluster" in config['data']['GNSS_data_path']:
         csv_file = '/cluster/work/igp_psr/arrueegg/sa_dataset.csv'
     doy = int(config['doy'])
 
