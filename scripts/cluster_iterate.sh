@@ -1,9 +1,10 @@
 #!/bin/bash
 
-cd /cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/
-source env/bin/activate
+cd /cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/
+source ../env/bin/activate
 
 # Path to the DOY list file
+ls
 DOY_LIST_FILE="lists/Unified_doy_list.txt"
 
 # Check if the DOY list file exists
@@ -27,18 +28,24 @@ END_DOY=$4
 while IFS= read -r line; do
     line_year=$(echo "$line" | cut -d' ' -f1)
     line_doy=$(echo "$line" | cut -d' ' -f2)
+
+    echo $line_year $line_doy 
     
     if [[ "$START_YEAR" -eq "$END_YEAR" ]]; then
         if [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" && "$line_doy" -le "$END_DOY" ]]; then
-            ./submit_cluster.sh "$line_year $line_doy"
+            echo "submit: $line_year $line_doy"
+            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
         fi
     else
         if [[ "$line_year" -gt "$START_YEAR" && "$line_year" -lt "$END_YEAR" ]]; then
-            ./submit_cluster.sh "$line_year $line_doy"
+            echo "submit: $line_year $line_doy"
+            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
         elif [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" ]]; then
-            ./submit_cluster.sh "$line_year $line_doy"
+            echo "submit: $line_year $line_doy"
+            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
         elif [[ "$line_year" -eq "$END_YEAR" && "$line_doy" -le "$END_DOY" ]]; then
-            ./submit_cluster.sh "$line_year $line_doy"
+            echo "submit: $line_year $line_doy"
+            sbatch scripts/submit_cluster.sh "$line_year $line_doy"
         fi
     fi
 done < "$DOY_LIST_FILE"
