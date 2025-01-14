@@ -1,10 +1,11 @@
 #!/bin/bash
 
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=4
 #SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=1024
-#SBATCH --gpus=1
+#SBATCH --gpus=0
+#SBATCH --output=/cluster/work/igp_psr/arrueegg/WP2/logs/slurm_ML-%j.out
 
 module load stack/2024-06 python_cuda/3.11.6
 module load eth_proxy

@@ -7,8 +7,8 @@ DOY=$2
 # assign the third argument to the $CONFIG_PATH variable if provided, otherwise use default config/config.yaml
 CONFIG_PATH=${3:-config/config.yaml}
 
-cd /scratch2/arrueegg/WP2/GIM_fusion_VLBI/
-source env/bin/activate
+#cd /scratch2/arrueegg/WP2/GIM_fusion_VLBI/
+#source env/bin/activate
 
 # echo "Running GNSS with MSE"
 # python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn MSELoss
