@@ -1,9 +1,10 @@
 #!/bin/bash
 
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=12
 #SBATCH --time=24:00:00
-#SBATCH --mem-per-cpu=2G
+#SBATCH --mem-per-cpu=3G
+#SBATCH --hint=nomultithread
 #SBATCH --output=/cluster/work/igp_psr/arrueegg/WP2/logs/slurm_ML-%j.out
 
 export OMP_NUM_THREADS=8
