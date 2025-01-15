@@ -5,6 +5,7 @@ Description: Global Ionospheric Maps from GNSS and VLBI data
 """
 
 import torch
+torch.set_num_threads(12)
 torch.set_num_interop_threads(24)
 import torch.optim as optim
 import torch.nn as nn
@@ -111,7 +112,6 @@ def train(config, model, vlbi_offsets, dataloader, criterion, optimizer, mf, dev
         if i >= 1 and config["training"]["overfit_single_batch"]:
             break
 
-    print(f"Instr Offsets: {vlbi_offsets.data}")
     avg_loss = running_loss / len(all_targets)
     return avg_loss, torch.cat(all_outputs), torch.cat(all_targets), torch.cat(techs)
 
@@ -324,6 +324,9 @@ def main():
         # Load best model for final testing
         checkpoint = torch.load(os.path.join(model_dir, f'best_model_{config["data"]["mode"]}_{config["model"]["model_type"]}_{config["year"]}-{config["doy"]}_seed{model_seed:02}.pth'), weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
+
+        # print Instrumental Offsets
+        logger.info(f"Instr Offsets: {instr_offsets.data}")
 
         # Final test accuracy
         test_outputs, test_targets, test_techs = test(config, model, instr_offsets, test_loader, mf, device)
