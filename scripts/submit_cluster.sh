@@ -3,7 +3,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --time=24:00:00
-#SBATCH --mem-per-cpu=512
+#SBATCH --mem-per-cpu=1G
 #SBATCH --output=/cluster/work/igp_psr/arrueegg/WP2/logs/slurm_ML-%j.out
 
 #export OMP_NUM_THREADS=12
