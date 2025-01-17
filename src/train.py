@@ -267,7 +267,7 @@ def main():
 
         if not config["debugging"]["debug"]:
             wandbname = f"{config['data']['mode']} {config['model']['model_type']} {config['year']}-{config['doy']} m{1+model_seed:02}"
-            wandb.init(project=config['project_name'], name=wandbname, config=config)
+            wandb.init(project=config['project_name'], name=wandbname, config=config, mode="offline")
         
         # Initialize model, criterion, optimizer
         model = get_model(config).to(device)
