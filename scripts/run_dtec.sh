@@ -10,21 +10,11 @@ CONFIG_PATH=${3:-config/config.yaml}
 #cd /scratch2/arrueegg/WP2/GIM_fusion_VLBI/
 #source env/bin/activate
 
-# echo "Running GNSS with MSE"
-# python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn MSELoss
-# python src/inference_map.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn MSELoss
-# python src/eval_with_SA.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn MSELoss
-
 echo "Running GNSS with LaplaceLoss"
 python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn LaplaceLoss
 python src/inference_map.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn LaplaceLoss
 python src/eval_with_SA.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode GNSS --loss_fn LaplaceLoss
 wandb sync wandb/
-
-# echo "Running Fusion with LaplaceLoss"
-# python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode Fusion --loss_fn LaplaceLoss
-# python src/inference_map.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode Fusion --loss_fn LaplaceLoss
-# python src/eval_with_SA.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode Fusion --loss_fn LaplaceLoss
 
 echo "Running Fusion with LaplaceLoss and vlbi_sampling_weight 1000.0"
 python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode Fusion --loss_fn LaplaceLoss --vlbi_sampling_weight 1000.0
@@ -37,11 +27,6 @@ python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy 
 python src/inference_map.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode Fusion --loss_fn LaplaceLoss --vlbi_loss_weight 1000.0
 python src/eval_with_SA.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode Fusion --loss_fn LaplaceLoss --vlbi_loss_weight 1000.0
 wandb sync wandb/
-
-# echo "Running DTEC Fusion with LaplaceLoss"
-# python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode DTEC_Fusion --loss_fn LaplaceLoss
-# python src/inference_map.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode DTEC_Fusion --loss_fn LaplaceLoss
-# python src/eval_with_SA.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode DTEC_Fusion --loss_fn LaplaceLoss
 
 echo "Running DTEC Fusion with LaplaceLoss and vlbi_loss_weight 100.0"
 python src/train.py --debug False --config_path $CONFIG_PATH --year $YEAR --doy $DOY --mode DTEC_Fusion --loss_fn LaplaceLoss --vlbi_loss_weight 100.0
