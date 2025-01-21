@@ -22,18 +22,20 @@ def parse_args():
     parser.add_argument('--debug', type=str, help='Enable debugging mode') 
     return parser.parse_args() 
 
-def get_hash(config):
-    # Convert the config to a string in a consistent order
-    config_string = yaml.dump(config, sort_keys=True)
-    # Generate an MD5 hash of the config string
-    hash = hashlib.md5(config_string.encode()).hexdigest()
-    return hash
+def get_exp_name(config):
+    # Use the config to generate an experiment name
+    mode = config['data']['mode']
+    year = config['year']
+    doy = config['doy']
+    sw = config['training']['vlbi_sampling_weight']
+    lw = config['training']['vlbi_loss_weight']
+    return f'{mode}_{year}_{doy}_SW{sw}_LW{lw}'
 
 def create_experiment(config):
-    hash = get_hash(config)
+    exp_name = get_exp_name(config)
     # Ensure the experiment directory exists
-    config['output_dir'] = f"experiments/{hash}"
-    os.makedirs(f"experiments/{hash}", exist_ok=True)
+    config['output_dir'] = f"experiments/{exp_name}"
+    os.makedirs(f"experiments/{exp_name}", exist_ok=True)
     config_path = os.path.join(config['output_dir'], 'config.yaml')
 
     # Save the config to a YAML file
