@@ -27,8 +27,8 @@ def get_exp_name(config):
     mode = config['data']['mode']
     year = config['year']
     doy = config['doy']
-    sw = config['training']['vlbi_sampling_weight']
-    lw = config['training']['vlbi_loss_weight']
+    sw = int(config['training']['vlbi_sampling_weight'])
+    lw = int(config['training']['vlbi_loss_weight'])
     return f'{mode}_{year}_{doy}_SW{sw}_LW{lw}'
 
 def create_experiment(config):

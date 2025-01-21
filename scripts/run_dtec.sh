@@ -4,6 +4,7 @@
 YEAR=$1
 # assign the second argument to the $DOY variable
 DOY=$2
+file_doy=$(printf "%03d" $DOY)
 # assign the third argument to the $CONFIG_PATH variable if provided, otherwise use default config/config.yaml
 CONFIG_PATH=${3:-config/config.yaml}
 
@@ -11,9 +12,9 @@ CONFIG_PATH=${3:-config/config.yaml}
 #source env/bin/activate
 
 LOSS_FN="LaplaceLoss"
-EXPERIMENTS_DIR="/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI"
+EXPERIMENTS_DIR="/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/experiments"
 
-TARGET_DIR="${EXPERIMENTS_DIR}/GNSS_${YEAR}_${DOY}_SW1_LW1/SA_plots"
+TARGET_DIR="${EXPERIMENTS_DIR}/GNSS_${YEAR}_${file_doy}_SW1_LW1/SA_plots"
 METRICS_FILE="${TARGET_DIR}/metrics.txt"
 if [ ! -f "$METRICS_FILE" ]; then
     echo "Running GNSS with LaplaceLoss"
@@ -26,7 +27,7 @@ else
     echo "Skipping execution for $YEAR $DOY GNSS; as metrics file already exists."
 fi
 
-TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${YEAR}_${DOY}_SW1000_LW1/SA_plots"
+TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${YEAR}_${file_doy}_SW1000_LW1/SA_plots"
 METRICS_FILE="${TARGET_DIR}/metrics.txt"
 if [ ! -f "$METRICS_FILE" ]; then
     echo "Running Fusion with LaplaceLoss and vlbi_sampling_weight 1000.0"
@@ -39,7 +40,7 @@ else
     echo "Skipping execution for $YEAR $DOY Fusion with vlbi_sampling_weight 1000.0; as metrics file already exists."
 fi
 
-TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${YEAR}_${DOY}_SW1_LW1000/SA_plots"
+TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${YEAR}_${file_doy}_SW1_LW1000/SA_plots"
 METRICS_FILE="${TARGET_DIR}/metrics.txt"
 if [ ! -f "$METRICS_FILE" ]; then
     echo "Running Fusion with LaplaceLoss and vlbi_loss_weight 1000.0"
@@ -52,7 +53,7 @@ else
     echo "Skipping execution for $YEAR $DOY Fusion with vlbi_loss_weight 1000.0; as metrics file already exists."
 fi
 
-TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${YEAR}_${DOY}_SW1_LW100/SA_plots"
+TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${YEAR}_${file_doy}_SW1_LW100/SA_plots"
 METRICS_FILE="${TARGET_DIR}/metrics.txt"
 if [ ! -f "$METRICS_FILE" ]; then
     echo "Running DTEC Fusion with LaplaceLoss and vlbi_loss_weight 100.0"
@@ -65,7 +66,7 @@ else
     echo "Skipping execution for $YEAR $DOY DTEC Fusion with vlbi_loss_weight 100.0; as metrics file already exists."
 fi
 
-TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${YEAR}_${DOY}_SW100_LW1/SA_plots"
+TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${YEAR}_${file_doy}_SW100_LW1/SA_plots"
 METRICS_FILE="${TARGET_DIR}/metrics.txt"
 if [ ! -f "$METRICS_FILE" ]; then
     echo "Running DTEC Fusion with LaplaceLoss and vlbi_sampling_weight 100.0"

@@ -27,24 +27,34 @@ END_DOY=$4
 while IFS= read -r line; do
     line_year=$(echo "$line" | cut -d' ' -f1)
     line_doy=$(echo "$line" | cut -d' ' -f2)
+    file_doy=$(printf "%03d" $line_doy)
 
     echo $line_year $line_doy 
-    
-    if [[ "$START_YEAR" -eq "$END_YEAR" ]]; then
-        if [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" && "$line_doy" -le "$END_DOY" ]]; then
-            echo "submit: $line_year $line_doy"
-            sbatch submit_cluster.sh "$line_year $line_doy"
+
+    EXPERIMENTS_DIR="/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/experiments"
+    TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${line_year}_${file_doy}_SW100_LW1/SA_plots"
+    METRICS_FILE="${TARGET_DIR}/metrics.txt"
+    if [ ! -f "$METRICS_FILE" ]; then
+        if [[ "$START_YEAR" -eq "$END_YEAR" ]]; then
+            if [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" && "$line_doy" -le "$END_DOY" ]]; then
+                echo "submit: $line_year $line_doy"
+                sbatch submit_cluster.sh "$line_year $line_doy"
+            else
+                echo $line_year $line_doy "are in year range but not in doy range"
+            fi 
+        else
+            if [[ "$line_year" -gt "$START_YEAR" && "$line_year" -lt "$END_YEAR" ]]; then
+                echo "submit: $line_year $line_doy"
+                sbatch submit_cluster.sh "$line_year $line_doy"
+            elif [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" ]]; then
+                echo "submit: $line_year $line_doy"
+                sbatch submit_cluster.sh "$line_year $line_doy"
+            elif [[ "$line_year" -eq "$END_YEAR" && "$line_doy" -le "$END_DOY" ]]; then
+                echo "submit: $line_year $line_doy"
+                sbatch submit_cluster.sh "$line_year $line_doy"
+            fi
         fi
     else
-        if [[ "$line_year" -gt "$START_YEAR" && "$line_year" -lt "$END_YEAR" ]]; then
-            echo "submit: $line_year $line_doy"
-            sbatch submit_cluster.sh "$line_year $line_doy"
-        elif [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" ]]; then
-            echo "submit: $line_year $line_doy"
-            sbatch submit_cluster.sh "$line_year $line_doy"
-        elif [[ "$line_year" -eq "$END_YEAR" && "$line_doy" -le "$END_DOY" ]]; then
-            echo "submit: $line_year $line_doy"
-            sbatch submit_cluster.sh "$line_year $line_doy"
-        fi
+        echo "Skipping execution for $line_year $file_doy."
     fi
 done < "$DOY_LIST_FILE"
