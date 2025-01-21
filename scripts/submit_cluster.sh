@@ -1,6 +1,7 @@
 #!/bin/bash
 
 #SBATCH --ntasks=1
+#SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=2G
@@ -17,3 +18,5 @@ config_path="config/config_cluster.yaml"
 cd $main_dir
 source ${main_dir}/env/bin/activate
 bash ${main_dir}/scripts/run_dtec.sh $year $doy $config_path
+
+
