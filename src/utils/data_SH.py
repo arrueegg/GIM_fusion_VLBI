@@ -598,6 +598,8 @@ class DTECVLBIDataset(Dataset):
         if len(data_files) == 0:
             return data
         for path in data_files:
+            if not os.path.exists(os.path.join(path, 'Apriori', 'Station.nc')):
+                continue
             current_data = pd.DataFrame()
             dtec, dtecstd = self.read_dTEC(path)
             sod, doy, epochs = self.obs_epochs(path)

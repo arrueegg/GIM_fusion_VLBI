@@ -2,13 +2,13 @@
 project_name: "GIM_fusion_VLBI"
 output_dir: "experiments/"
 year: 2023
-doy: 10
+doy: 12
 random_seed: 42
 
 # Data configuration
 data:
-  mode: "GNSS"    # Fusion or GNSS (only GNSS) or DTEC_Fusion
-  GNSS_data_path: "/scratch2/arrueegg/WP2/GNSS_STEC_DB/"
+  mode: "DTEC_Fusion"    # Fusion or GNSS (only GNSS) or DTEC_Fusion
+  GNSS_data_path: "/home/ggl/data/space/IONO/STEC_DB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/PyIono_Output/Results/"
   VLBI_raw_data_path: "/home/ggl/data/space/vlbi/ivsdata/vgosdb/"
   columns_to_load:  #['station', 'stec', 'vtec', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod', 'dcbs', 'dcbr'] # List of columns to load or None (no arg) for all columns
@@ -38,7 +38,7 @@ training:
   epochs: 30
   batchsize: 512
   vlbi_sampling_weight: 1.0   # Weight for VLBI data sampling relative to GNSS data. Set to 1.0 for no weighting. higher weighting means sampled more frequently
-  num_workers: 8
+  num_workers: 0
   learning_rate: 0.001
   optimizer: "Adam"        # Optimizer: SGD, Adam, AdamW, RMSprop, Adagrad, Adadelta
   weight_decay: 0
