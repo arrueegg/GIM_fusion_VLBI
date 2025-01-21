@@ -5,8 +5,6 @@ Description: Global Ionospheric Maps from GNSS and VLBI data
 """
 
 import torch
-torch.set_num_threads(12)
-torch.set_num_interop_threads(24)
 import torch.optim as optim
 import torch.nn as nn
 import numpy as np
