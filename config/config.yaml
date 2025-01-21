@@ -38,7 +38,7 @@ training:
   epochs: 30
   batchsize: 512
   vlbi_sampling_weight: 1.0   # Weight for VLBI data sampling relative to GNSS data. Set to 1.0 for no weighting. higher weighting means sampled more frequently
-  num_workers: 0
+  num_workers: 4
   learning_rate: 0.001
   optimizer: "Adam"        # Optimizer: SGD, Adam, AdamW, RMSprop, Adagrad, Adadelta
   weight_decay: 0

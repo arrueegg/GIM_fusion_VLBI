@@ -13,7 +13,6 @@ import numpy as np
 import random
 import logging
 import wandb
-import os
 from tqdm import tqdm
 
 from models.model import get_model, init_xavier
