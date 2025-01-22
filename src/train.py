@@ -14,6 +14,7 @@ import random
 import logging
 import wandb
 from tqdm import tqdm
+import os
 
 from models.model import get_model, init_xavier
 from utils.loss_function import get_criterion
