@@ -33,8 +33,21 @@ while IFS= read -r line; do
 
     EXPERIMENTS_DIR="/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/experiments"
     TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${line_year}_${file_doy}_SW100_LW1/SA_plots"
-    METRICS_FILE="${TARGET_DIR}/metrics.txt"
-    if [ ! -f "$METRICS_FILE" ]; then
+    METRICS_FILE1="${TARGET_DIR}/metrics.txt"
+    TARGET_DIR="${EXPERIMENTS_DIR}/DTEC_Fusion_${line_year}_${file_doy}_SW1_LW100/SA_plots"
+    METRICS_FILE2="${TARGET_DIR}/metrics.txt"
+    TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${line_year}_${file_doy}_SW1000_LW1/SA_plots"
+    METRICS_FILE3="${TARGET_DIR}/metrics.txt"
+    TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${line_year}_${file_doy}_SW1_LW1000/SA_plots"
+    METRICS_FILE4="${TARGET_DIR}/metrics.txt"
+    TARGET_DIR="${EXPERIMENTS_DIR}/GNSS_${line_year}_${file_doy}_SW1_LW1/SA_plots"
+    METRICS_FILE5="${TARGET_DIR}/metrics.txt"
+
+    if [ ! -f "$METRICS_FILE1" ] || 
+        [ ! -f "$METRICS_FILE2" ] || 
+        [ ! -f "$METRICS_FILE3" ] || 
+        [ ! -f "$METRICS_FILE4" ] || 
+        [ ! -f "$METRICS_FILE5" ]; then
         if [[ "$START_YEAR" -eq "$END_YEAR" ]]; then
             if [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" && "$line_doy" -le "$END_DOY" ]]; then
                 echo "submit: $line_year $line_doy"
