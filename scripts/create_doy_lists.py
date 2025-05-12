@@ -16,7 +16,7 @@ def extract_doy_and_year(filename):
         return None, None, None, None
 
 if __name__ == "__main__":
-    base_path = '/scratch2/arrueegg/WP1/publish_complete/VTEC_per_session/'
+    base_path = '/scratch2/arrueegg/WP1/VLBIono/Results/'
     os.makedirs('scripts/lists', exist_ok=True)
     vgos_file = open('scripts/lists/VGOS_doy_list.txt', 'w')
     vlbi_file = open('scripts/lists/VLBI_doy_list.txt', 'w')
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     vgos_set = set()
     vlbi_set = set()
 
-    for tech in os.listdir(base_path):
+    for tech in ['VGOS', 'VLBI']:
         tech_path = os.path.join(base_path, tech)
         if os.path.isdir(tech_path):
             for year in os.listdir(tech_path):

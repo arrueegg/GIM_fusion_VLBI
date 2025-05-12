@@ -9,6 +9,7 @@ import numpy as np
 import tarfile
 import netCDF4 as nc
 import pyproj
+import re
 from io import StringIO
 from datetime import datetime, timedelta
 from spacepy.coordinates import Coords
@@ -22,12 +23,12 @@ warnings.filterwarnings("ignore")
 class SingleGNSSDataset(Dataset):
     def __init__(self, config, split='random'):
         # Load and preprocess your data here
-        year = config['year']
-        doy = config['doy']
+        self.year = config['year']
+        self.doy = config['doy']
         self.elev = config['preprocessing']['elevation']  # Elevation threshold
         self.columns_to_load = config["data"]["columns_to_load"]
         
-        data_file = os.path.join(config['data']['GNSS_data_path'], str(year), str(doy), f'ccl_{year}{doy}_30_5.h5')
+        data_file = os.path.join(config['data']['GNSS_data_path'], str(self.year), str(self.doy), f'ccl_{self.year}{self.doy}_30_5.h5')
         self.split = split
         self.mode = config['data']['mode']
         self.data = self.load_data(data_file)
@@ -43,14 +44,16 @@ class SingleGNSSDataset(Dataset):
         data = {}
 
         with h5py.File(data_file, 'r') as h5_file:
+            
+            all_data = h5_file[self.year][self.doy]['all_data']
 
             # If no specific columns are provided, load all columns
             if self.columns_to_load is None:
-                self.columns_to_load = list(h5_file.keys())  # Load all column names
+                self.columns_to_load = list(all_data.dtype.names)
             
             if self.split != 'random':
                 # Load the 'station' column to filter rows first
-                station_column = h5_file['station'][:]
+                station_column = all_data['station'][:]
                 station_column = np.array([x.decode('utf-8').upper() if isinstance(x, bytes) else x for x in station_column])
         
                 # Filter indices for the wanted stations
@@ -58,12 +61,12 @@ class SingleGNSSDataset(Dataset):
 
                 # Load only the filtered rows for each column
                 for column in self.columns_to_load:
-                    data[column] = h5_file[column][wanted_indices]
+                    data[column] = all_data[column][wanted_indices]
 
             else:
                 # Load the data for the specified columns
                 for column in self.columns_to_load:
-                    data[column] = h5_file[column][:]
+                    data[column] = all_data[column][:]
 
         
         # Convert the dictionary to a DataFrame
@@ -95,10 +98,10 @@ class SingleGNSSDataset(Dataset):
         df.loc[:, 'sod_normalize'] = 2 * df['sod'] / 86400 - 1
 
         # Normalize spatial features
-        df.loc[:, 'sm_lon'] = (df['sm_lon'] + 180) % 360 - 180
+        df.loc[:, 'sm_lon_ipp'] = (df['sm_lon_ipp'] + 180) % 360 - 180
 
         # Keep only the necessary columns
-        columns_to_keep = ['vtec', 'sm_lat', 'sm_lon', 'sin_utc', 'cos_utc', 'sod_normalize']
+        columns_to_keep = ['vtec', 'sm_lat_ipp', 'sm_lon_ipp', 'sin_utc', 'cos_utc', 'sod_normalize']
         if self.mode == 'DTEC_Fusion':
             columns_to_keep.append('satele')
             columns_to_keep.append('station')
@@ -133,82 +136,86 @@ class SingleVLBIDataset(Dataset):
         
         date1 = datetime(int(self.year), 1, 1) + timedelta(days=int(self.doy) - 1)
         date2 = date1 - timedelta(days=1)
-        name1 = date1.strftime('%y%b%d').upper()
-        name2 = date2.strftime('%y%b%d').upper()
-        vlbi_path = os.path.join(config["data"]["VLBI_data_path"], "VLBI", f"{self.year}")
+        name1 = date1.strftime('%Y%m%d').upper()
+        name2 = date2.strftime('%Y%m%d').upper()
+        vlbi_path = os.path.join(config["data"]["VLBI_data_path"], "SX", f"{self.year}")
         vgos_path = os.path.join(config["data"]["VLBI_data_path"], "VGOS", f"{self.year}")
 
         paths = []
         for _, dirs, _ in os.walk(vlbi_path):
             for dir_name in dirs:
                 if dir_name.startswith(name1) or dir_name.startswith(name2): 
-                    paths.append(os.path.join(vlbi_path, dir_name, dir_name+'.txt'))  
+                    summary_path = os.path.join(vlbi_path, dir_name, 'summary.md')
+                    if os.path.exists(summary_path):
+                        paths.append(summary_path)  
         
         for _, dirs, _ in os.walk(vgos_path):
             for dir_name in dirs:
                 if dir_name.startswith(name1) or dir_name.startswith(name2):  
-                    paths.append(os.path.join(vgos_path, dir_name, dir_name+'.txt'))
-
+                    summary_path = os.path.join(vgos_path, dir_name, 'summary.md')
+                    if os.path.exists(summary_path):
+                        paths.append(summary_path)
         return paths
 
     def load_data(self, data_files):
         data = pd.DataFrame()
         if len(data_files) == 0:
             return data
-        data_list = [self.load_txt(file) for file in data_files]
+        data_list = [self.load_markdown(file) for file in data_files]
         data = pd.concat(data_list, ignore_index=True)
 
         data = self.preprocess(data)
         return data
 
-    def load_txt(self, path):
+    def load_markdown(self, path):
         """
-        Load a text file of session results and process its contents into separate DataFrames.
+        Load a markdown file of session results and process its contents into separate DataFrames.
 
         Parameters:
-            path (str): The path to the directory containing the text file.
+            path (str): The path of the markdown file.
 
         Returns:
-            dict: A dictionary containing DataFrames for each table in the text file.
-                - 'df_vtecs' (DataFrame): DataFrame for the 'vtecs' table.
-                - 'df_biases' (DataFrame): DataFrame for the 'biases' table.
-                - 'df_gradients' (DataFrame): DataFrame for the 'gradients' table.
-                - 'df_instr_offsets' (DataFrame): DataFrame for the 'instr_offsets' table.
+            'df_vtecs' (DataFrame): VTEC time-series table.
+
         """
-        # Read the text file
-        with open(path, 'r') as file:
-            data = file.read()
+        # Read entire file
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
 
-        # Split the text into tables based on empty lines
-        tables = data.split('\n\n')
+        # find section and capture everything until the next "## " or end-of-file
+        pattern = re.compile(
+            rf'^##\s*{re.escape("VTEC Time Series")}\s*\n'      # start of the named section
+            r'(?P<table>[\s\S]*?)(?=^##\s|\Z)',             # everything up to next "## " or EOF
+            re.MULTILINE
+        )
+        m = pattern.search(content)
+        if not m:
+            return pd.DataFrame()  # empty if not found
 
-        # Define column names for each table
-        column_names = [
-            ['station', 'date', 'epoch', 'vgos_vtec', 'v_vtec_sigma', 'gims_vtec', 'madr_vtec'],
-            ['station', 'bias w.r.t. GIMs', 'bias w.r.t. SMTMs'],
-            ['station', 'date', 'Gn', 'Gn_sigma', 'Gs', 'Gs_sigma'],
-            ['station', 'date', 'instr_offset', 'io_sigma']
-        ]
+        # get just the markdown table text, line-by-line
+        raw = m.group('table').strip().splitlines()
+        # drop any blank lines
+        lines = [ln for ln in raw if ln.strip()]
+        md_table = "\n".join(lines)
 
-        df_names = ['vtecs', 'biases', 'gradients', 'instr_offsets']
+        # read with pandas (separator is '|' in markdown tables)
+        df = pd.read_csv(
+            StringIO(md_table),
+            sep='|',
+            header=0,
+            skiprows=[1],        # skip the markdown separator row (----|----)
+            engine='python'
+        )
+        # drop the empty first/last columns created by leading/trailing pipes
+        df = df.iloc[:, 1:-1]
+        # strip whitespace from column names & cell values
+        df.columns = df.columns.str.strip()
+        df = df.applymap(lambda v: v.strip() if isinstance(v, str) else v)
+        # convert any column that can be numeric
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='ignore')
 
-        dfs = {}
-        # Process each table
-        for i, table in enumerate(tables):
-            # Skip empty tables
-            if not table.strip():
-                continue
-            
-            # Use StringIO to simulate a file for pandas
-            table_data = StringIO(table)
-            
-            # Read the table as a DataFrame with predefined column names
-            df = pd.read_csv(table_data, sep='\s+', skipinitialspace=True, names=column_names[i], skiprows=1)
-
-            # Store the DataFrame in the dictionary with a meaningful key
-            dfs[f'df_{df_names[i]}'] = df
-
-        return dfs['df_vtecs']
+        return df
 
     def preprocess(self, df):
         if self.split != 'random':
@@ -229,7 +236,7 @@ class SingleVLBIDataset(Dataset):
         mask = df['doy'] == int(self.doy) 
         df = df[mask]
 
-        sta_coords = pd.read_json(os.path.join(self.vlbi_path, "station_coords.json"))
+        sta_coords = pd.read_json(os.path.join("src", "utils", "station_coords.json"))
         
         df['Latitude'] = df['station'].map(lambda x: sta_coords.get(x, {}).get('Latitude'))
         df['Longitude'] = df['station'].map(lambda x: sta_coords.get(x, {}).get('Longitude'))
@@ -251,9 +258,10 @@ class SingleVLBIDataset(Dataset):
         df['sod'] = times.dt.hour * 3600 + times.dt.minute * 60 + times.dt.second
 
         df.rename(columns={'vgos_vtec': 'vtec'}, inplace=True)
+        df.rename(columns={'vlbi_vtec': 'vtec'}, inplace=True)
 
         # Filter data
-        mask = (df['vtec'] > 2.0) & (df['vtec'] <= 200)
+        mask = (df['vtec'] > 0.1) & (df['vtec'] <= 200)
         df = df[mask]
         
         # Handle empty dataframe case
@@ -862,8 +870,8 @@ def get_data_loaders(config):
         test_dataset = FusionDataset(test_dataset, SingleVLBIDataset(config, split="test"))
 
     elif config["data"]["mode"] == "Fusion":
-        train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_data(config)
+        train_gnss, val_gnss, test_gnss = get_GNSS_data(config)
 
         train_dataset = FusionDataset(train_gnss, train_vlbi)
         val_dataset = FusionDataset(val_gnss, val_vlbi)

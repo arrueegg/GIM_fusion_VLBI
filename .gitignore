@@ -10,6 +10,7 @@ wandb/
 *.log
 *.tmp
 temp/
+old/
 
 # Ignore specific files
 experiments/
