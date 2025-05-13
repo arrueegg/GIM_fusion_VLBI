@@ -27,8 +27,6 @@ else
     echo "Skipping execution for $YEAR $DOY GNSS; as metrics file already exists."
 fi
 
-exit 1
-
 TARGET_DIR="${EXPERIMENTS_DIR}/Fusion_${YEAR}_${file_doy}_SW1000_LW1/SA_plots"
 METRICS_FILE="${TARGET_DIR}/metrics.txt"
 if [ ! -f "$METRICS_FILE" ]; then
