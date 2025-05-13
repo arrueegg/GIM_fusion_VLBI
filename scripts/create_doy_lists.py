@@ -3,9 +3,8 @@ from datetime import datetime, timedelta
 
 def extract_doy_and_year(filename):
     try:
-        # Assuming the filename format is YYbbDD or similar
-        date_str = filename[:7]  # Adjust this slice according to your filename format
-        date_obj = datetime.strptime(date_str, '%y%b%d')
+        date_str = filename[:8]  # Adjust this slice according to your filename format
+        date_obj = datetime.strptime(date_str, '%Y%m%d')
         doy = date_obj.timetuple().tm_yday
         year = date_obj.year
         next_day_obj = date_obj + timedelta(days=1)
@@ -26,7 +25,7 @@ if __name__ == "__main__":
     vgos_set = set()
     vlbi_set = set()
 
-    for tech in ['VGOS', 'VLBI']:
+    for tech in ['VGOS', 'SX']:
         tech_path = os.path.join(base_path, tech)
         if os.path.isdir(tech_path):
             for year in os.listdir(tech_path):
@@ -38,7 +37,7 @@ if __name__ == "__main__":
                         if tech == 'VGOS':
                             vgos_set.add(entry1)
                             vgos_set.add(entry2)
-                        elif tech == 'VLBI':
+                        elif tech == 'SX':
                             vlbi_set.add(entry1)
                             vlbi_set.add(entry2)
 
