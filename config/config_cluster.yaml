@@ -9,7 +9,7 @@ random_seed: 42
 data:
   mode: "GNSS"    # Fusion or GNSS (only GNSS) or DTEC_Fusion
   GNSS_data_path: "/cluster/work/igp_psr/arrueegg/GNSS_STEC_DB/"
-  VLBI_data_path: "/cluster/work/igp_psr/arrueegg/VLBIono/Results/"
+  VLBI_data_path: "/cluster/work/igp_psr/arrueegg/WP1/VLBIono/Results/"
   VLBI_raw_data_path: "/cluster/work/igp_psr/arrueegg/vgosdb/"
   columns_to_load:  #['station', 'stec', 'vtec', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod', 'dcbs', 'dcbr'] # List of columns to load or None (no arg) for all columns
   shuffle: True
