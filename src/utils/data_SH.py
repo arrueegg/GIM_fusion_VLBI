@@ -904,7 +904,7 @@ def get_data_loaders(config):
     else:
         # Create data loaders with custom collate_fn
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle,
-                                  num_workers=config["training"]["num_workers"], collate_fn=collate_fn)
+                                  num_workers=config["training"]["num_workers"], collate_fn=collate_fn, pin_memory=True, prefetch_factor=2)
 
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
                             num_workers=config["training"]["num_workers"], collate_fn=collate_fn)

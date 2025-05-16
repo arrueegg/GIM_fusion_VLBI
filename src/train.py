@@ -277,10 +277,14 @@ def main():
         optimizer = get_optimizer(config, list(model.parameters()) + [instr_offsets])
         mf = MF.mslm
         scheduler = config["training"]["scheduler"]
-        if scheduler:
+        if scheduler == "step_lr":
             scheduler = torch.optim.lr_scheduler.StepLR(
                 optimizer, step_size=config["training"]["scheduler_step_size"], 
                 gamma=config["training"]["scheduler_gamma"]
+            )
+        elif scheduler == "cosine_annealing":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=config["training"]["epochs"], eta_min=config["training"]["learning_rate"]/1000
             )
 
         best_val_loss = float('inf')

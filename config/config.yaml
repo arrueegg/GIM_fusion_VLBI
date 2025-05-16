@@ -26,7 +26,7 @@ model:
   ensemble_size: 5
   model_type: "MLP"
   input_size: 39           # Input feature size
-  hidden_size: [90,90,90]    # Hidden layer size
+  hidden_size: [256,256,256]    # Hidden layer size
   output_size: 1           # Output prediction size
   activation: "tanh"       # Activation function: relu, tanh, sigmoid, leaky_relu
   apply_softplus: false    # Apply softplus for positive-only outputs
@@ -35,7 +35,7 @@ model:
 # Training configuration
 training:
   test_size: 0.2          # Proportion of data to use for testing
-  epochs: 30
+  epochs: 20
   batchsize: 512
   vlbi_sampling_weight: 1.0   # Weight for VLBI data sampling relative to GNSS data. Set to 1.0 for no weighting. higher weighting means sampled more frequently
   num_workers: 4
@@ -46,7 +46,7 @@ training:
   weighted_loss: true      # Whether to use weighted loss
   gnss_loss_weight: 1.0    # GNSS loss weight
   vlbi_loss_weight: 1.0    # VLBI loss weight
-  scheduler: "step_lr"     # Scheduler: none, step_lr, cosine_annealing
+  scheduler: "cosine_annealing"     # Scheduler: none, step_lr, cosine_annealing
   scheduler_step_size: 10  # Step size for scheduler (reduces lr every X epochs)
   scheduler_gamma: 0.1     # Gamma for scheduler (gamma ist the reduction factor lr_new = lr_old * gamma)
   early_stopping: true     # Whether to use early stopping
