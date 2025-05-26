@@ -1,9 +1,8 @@
 #!/bin/bash
 
 #SBATCH --ntasks=1
-#SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
-#SBATCH --time=24:00:00
+#SBATCH --time=72:00:00
 #SBATCH --mem-per-cpu=2G
 #SBATCH --output=/cluster/work/igp_psr/arrueegg/WP2/logs/slurm_ML-%j.out
 
