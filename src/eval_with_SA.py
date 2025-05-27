@@ -120,19 +120,45 @@ def calculate_metrics(config, results):
     """
     Calculate evaluation metrics for model predictions.
 
-    Parameters:
-    results (pd.DataFrame): DataFrame containing ground truth and model predictions.
-
-    Returns:
-    dict: Dictionary containing RMSE and mean absolute error.
+    Writes both global and per-station RMSE/MAE to metrics.txt
+    and also saves a station_metrics.csv for easy ingestion.
     """
-    rmse = np.sqrt(np.mean((results['model_prediction'] - results['vtec']) ** 2))
-    mae = np.mean(np.abs(results['model_prediction'] - results['vtec']))
-    metrics_path = os.path.join(config['output_dir'], 'SA_plots', 'metrics.txt')
+    # 1) Global metrics
+    rmse_global = np.sqrt(np.mean((results['model_prediction'] - results['vtec']) ** 2))
+    mae_global  = np.mean(np.abs(results['model_prediction'] - results['vtec']))
+    rmse_global, mae_global = round(rmse_global, 2), round(mae_global, 2)
+
+    # 2) Per-station metrics
+    station_rows = []
+    for station, grp in results.groupby('station'):
+        rmse_s = np.sqrt(np.mean((grp['model_prediction'] - grp['vtec'])**2))
+        mae_s  = np.mean(np.abs(  grp['model_prediction'] - grp['vtec']))
+        station_rows.append({
+            'station': station,
+            'RMSE': round(rmse_s, 2),
+            'MAE':  round(mae_s,  2),
+            'count': len(grp)
+        })
+
+    # Turn into DataFrame and sort
+    df_stats = pd.DataFrame(station_rows).sort_values('RMSE', ascending=False)
+
+    # 3) Write metrics.txt
+    out_dir = os.path.join(config['output_dir'], 'SA_plots')
+    os.makedirs(out_dir, exist_ok=True)
+    metrics_path = os.path.join(out_dir, 'metrics.txt')
     with open(metrics_path, 'w') as f:
-        f.write(f"RMSE: {rmse}\n")
-        f.write(f"MAE: {mae}\n")
-    return {"RMSE": round(rmse, 2), "MAE": round(mae, 2)}
+        f.write(f"GLOBAL RMSE: {rmse_global}\n")
+        f.write(f"GLOBAL MAE: {mae_global}\n\n")
+        f.write("STATION-BASED METRICS (sorted by RMSE):\n")
+        for _, row in df_stats.iterrows():
+            f.write(f"  {row.station}: RMSE={row.RMSE}, MAE={row.MAE}, N={row.count}\n")
+
+    # 4) Also dump a CSV for further analysis/plotting
+    csv_path = os.path.join(out_dir, 'station_metrics.csv')
+    df_stats.to_csv(csv_path, index=False)
+
+    return {"RMSE": rmse_global, "MAE": mae_global}
 
 def main():
     """

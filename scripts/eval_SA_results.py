@@ -35,7 +35,17 @@ def read_experiment(experiment_folder, experiment_name):
     df_row["RMSE"] = SA_results[0][1]
     df_row["MAE"] = SA_results[1][1]
 
+    
+
     return df_row
+
+def filter_region(df, center_lat, center_lon, radius_deg):
+    return df[
+        (df.latitude  >= center_lat - radius_deg) &
+        (df.latitude  <= center_lat + radius_deg) &
+        (df.longitude >= center_lon - radius_deg) &
+        (df.longitude <= center_lon + radius_deg)
+    ]
 
 def evaluate(df):
     print("Number of experiments processed in total: ", len(df))
@@ -157,6 +167,15 @@ def main():
     Main function to orchestrate the evaluation process.
     """
 
+    STATION_COORDS = {
+        'Kokee': (22.126, -159.665),
+        # add more stations if needed
+    }
+
+    # 2) Region constants
+    KOKEE_LAT, KOKEE_LON = STATION_COORDS['Kokee']
+    BBOX_RADIUS_DEG = 1.0  # half‐width of your bounding‐box in degrees
+
     experiments_folder = '/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
     
     df = pd.DataFrame()
@@ -169,6 +188,14 @@ def main():
     
     # Print or save the evaluation results
     print(evaluation_results)
+
+    df_kokee = filter_region(df, KOKEE_LAT, KOKEE_LON, BBOX_RADIUS_DEG)
+    # Evaluate only that subset
+    eval_sta_results = evaluate(df_kokee)
+
+    # Print or save the evaluation results for Kokee
+    print("Evaluation results for Kokee station:")
+    print(eval_sta_results)
 
 if __name__ == "__main__":
     main()
