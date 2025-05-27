@@ -1,4 +1,4 @@
-from math import e
+from math import radians, sin, cos, sqrt, atan2
 import pandas as pd
 import numpy as np
 import torch
@@ -10,6 +10,24 @@ from utils.config_parser import parse_config
 from models.model import get_model
 import warnings
 warnings.filterwarnings("ignore")
+
+STATION_COORDS = {
+    'Kokee':   (22.14, -159.64),
+    # add more stations here…
+}
+RADIUS_KM = 1000.0  # buffer around each station
+
+def haversine(lat1, lon1, lat2, lon2):
+    """
+    Compute the great-circle distance between two points on Earth (km).
+    """
+    R = 6371.0  # Earth radius in km
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    deltaphi = np.radians(lat2 - lat1)
+    deltalambda = np.radians(lon2 - lon1)
+    a = np.sin(deltaphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(deltalambda/2)**2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    return R * c
 
 def load_data(csv_file, doy):
     """
@@ -118,30 +136,43 @@ def plot_results(config, results, metrics):
 
 def calculate_metrics(config, results):
     """
-    Calculate evaluation metrics for model predictions.
-
-    Writes both global and per-station RMSE/MAE to metrics.txt
-    and also saves a station_metrics.csv for easy ingestion.
+    Calculate global + per-station RMSE/MAE based on a distance filter.
+    Writes metrics.txt and station_metrics.csv under SA_plots.
     """
     # 1) Global metrics
-    rmse_global = np.sqrt(np.mean((results['model_prediction'] - results['vtec']) ** 2))
+    rmse_global = np.sqrt(np.mean((results['model_prediction'] - results['vtec'])**2))
     mae_global  = np.mean(np.abs(results['model_prediction'] - results['vtec']))
     rmse_global, mae_global = round(rmse_global, 2), round(mae_global, 2)
 
     # 2) Per-station metrics
     station_rows = []
-    for station, grp in results.groupby('station'):
-        rmse_s = np.sqrt(np.mean((grp['model_prediction'] - grp['vtec'])**2))
-        mae_s  = np.mean(np.abs(  grp['model_prediction'] - grp['vtec']))
+    # for each station, compute distances to all points,
+    # filter by RADIUS_KM, then compute metrics
+    for station, (slat, slon) in STATION_COORDS.items():
+        # vectorized haversine across the DataFrame
+        dists = haversine(
+            slat, slon,
+            results['lat'].values,
+            results['lon'].values
+        )
+        mask = dists <= RADIUS_KM
+        subset = results[mask]
+
+        if not subset.empty:
+            rmse_s = np.sqrt(np.mean((subset['model_prediction'] - subset['vtec'])**2))
+            mae_s  = np.mean(np.abs(subset['model_prediction'] - subset['vtec']))
+            count = len(subset)
+        else:
+            rmse_s, mae_s, count = np.nan, np.nan, 0
+
         station_rows.append({
             'station': station,
-            'RMSE': round(rmse_s, 2),
-            'MAE':  round(mae_s,  2),
-            'count': len(grp)
+            'RMSE':    round(rmse_s, 2) if not np.isnan(rmse_s) else None,
+            'MAE':     round(mae_s, 2)  if not np.isnan(mae_s) else None,
+            'count':   count
         })
 
-    # Turn into DataFrame and sort
-    df_stats = pd.DataFrame(station_rows).sort_values('RMSE', ascending=False)
+    df_stats = pd.DataFrame(station_rows).sort_values('RMSE', ascending=False, na_position='last')
 
     # 3) Write metrics.txt
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
@@ -150,11 +181,11 @@ def calculate_metrics(config, results):
     with open(metrics_path, 'w') as f:
         f.write(f"GLOBAL RMSE: {rmse_global}\n")
         f.write(f"GLOBAL MAE: {mae_global}\n\n")
-        f.write("STATION-BASED METRICS (sorted by RMSE):\n")
+        f.write("PER-STATION METRICS (within {} km):\n".format(RADIUS_KM))
         for _, row in df_stats.iterrows():
-            f.write(f"  {row.station}: RMSE={row.RMSE}, MAE={row.MAE}, N={row.count}\n")
+            f.write(f"  {row.station}: RMSE={row.RMSE}, MAE={row.MAE}, N={row['count']}\n")
 
-    # 4) Also dump a CSV for further analysis/plotting
+    # 4) Dump station_metrics.csv
     csv_path = os.path.join(out_dir, 'station_metrics.csv')
     df_stats.to_csv(csv_path, index=False)
 
