@@ -1,250 +1,214 @@
-from math import radians, sin, cos, sqrt, atan2
+#!/usr/bin/env python3
+import os
+import time
+import argparse
+import yaml
+import logging
 import pandas as pd
 import numpy as np
 import torch
-import os
-import logging
 import matplotlib.pyplot as plt
+import warnings
+
 from utils.locationencoder.pe import SphericalHarmonics
 from utils.config_parser import parse_config
 from models.model import get_model
-import warnings
+
 warnings.filterwarnings("ignore")
 
+# Station definitions for per-station metrics
 STATION_COORDS = {
-    'Kokee':   (22.14, -159.64),
+    'Kokee': (22.14, -159.64),
     # add more stations here…
 }
 RADIUS_KM = 1000.0  # buffer around each station
+LOSS_FN = "LaplaceLoss"
+
 
 def haversine(lat1, lon1, lat2, lon2):
     """
-    Compute the great-circle distance between two points on Earth (km).
+    Compute great-circle distance (km) between two points.
     """
-    R = 6371.0  # Earth radius in km
+    R = 6371.0
     phi1, phi2 = np.radians(lat1), np.radians(lat2)
-    deltaphi = np.radians(lat2 - lat1)
-    deltalambda = np.radians(lon2 - lon1)
-    a = np.sin(deltaphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(deltalambda/2)**2
-    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-    return R * c
+    dphi = np.radians(lat2 - lat1)
+    dlambda = np.radians(lon2 - lon1)
+    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
+    return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
 
 def load_data(csv_file, doy):
-    """
-    Load satellite altimetry data for a specific day of the year (DOY).
+    df = pd.read_csv(csv_file)
+    df['time'] = pd.to_datetime(df['time'])
+    return df[df['time'].dt.dayofyear == doy]
 
-    Parameters:
-    csv_file (str): Path to the CSV file containing the data.
-    doy (int): Day of the year to filter the data.
-
-    Returns:
-    pd.DataFrame: Filtered DataFrame containing data for the specified DOY.
-    """
-    data = pd.read_csv(csv_file)
-    data['time'] = pd.to_datetime(data['time'])
-    data = data[data['time'].dt.dayofyear == doy]
-    return data
 
 def prepare_inputs(sa_data, device, sh_encoder):
-    """
-    Prepare inputs for the model by encoding lat/lon and adding time-based features.
-
-    Parameters:
-    sa_data (pd.DataFrame): DataFrame containing the satellite altimetry data.
-    device (torch.device): Device to move tensors to.
-    sh_encoder (SphericalHarmonics): Instance for spherical harmonics encoding.
-
-    Returns:
-    torch.Tensor: Prepared input tensor for the model.
-    """
-    lat_tensor = torch.tensor(sa_data['sm_lat'].values, dtype=torch.float32).to(device)
-    lon_tensor = torch.tensor(sa_data['sm_lon'].values, dtype=torch.float32).to(device)
-    inputs = torch.stack([lon_tensor, lat_tensor], dim=1).float()
-
+    lat = torch.tensor(sa_data['sm_lat'].values, dtype=torch.float32, device=device)
+    lon = torch.tensor(sa_data['sm_lon'].values, dtype=torch.float32, device=device)
+    inputs = torch.stack([lon, lat], dim=1)
     if sh_encoder:
         inputs = sh_encoder(inputs)
-
-    # Calculate sod (Seconds of Day)
-    sod = torch.tensor((sa_data['time'].dt.hour * 3600 + sa_data['time'].dt.minute * 60 + sa_data['time'].dt.second).values, dtype=torch.float32).to(device)
+    times = (sa_data['time'].dt.hour * 3600 +
+             sa_data['time'].dt.minute * 60 +
+             sa_data['time'].dt.second)
+    sod = torch.tensor(times.values, dtype=torch.float32, device=device)
     sin_utc = torch.sin(sod / 86400 * 2 * torch.pi)
     cos_utc = torch.cos(sod / 86400 * 2 * torch.pi)
-    sod_normalized = 2 * sod / 86400 - 1
+    norm = 2 * sod / 86400 - 1
+    return torch.cat([inputs,
+                      sin_utc.unsqueeze(1),
+                      cos_utc.unsqueeze(1),
+                      norm.unsqueeze(1)],
+                     dim=1)
 
-    inputs = torch.cat([inputs, sin_utc.unsqueeze(1), cos_utc.unsqueeze(1), sod_normalized.unsqueeze(1)], dim=1)
-    return inputs
-
-def evaluate_results(sa_data, predictions, config):
-    """
-    Compare model predictions to ground truth from the SA dataset.
-
-    Parameters:
-    sa_data (pd.DataFrame): DataFrame containing the satellite altimetry data.
-    predictions (np.ndarray): Model predictions for the SA data.
-
-    Returns:
-    pd.DataFrame: DataFrame containing ground truth and model predictions.
-    """
-    results = sa_data.copy()
-    results['model_prediction'] = predictions[:, 0]
-    results['uncertainty'] = predictions[:, 1] if predictions.shape[1] > 1 else np.nan
-    out_path = os.path.join(config['output_dir'], 'SA_plots')
-    os.makedirs(out_path, exist_ok=True)
-    results.to_csv(os.path.join(out_path, "results.csv"), index=False)
-    return results
-
-def plot_results(config, results, metrics):
-    """
-    Generate plots to visualize model predictions versus ground truth.
-
-    Parameters:
-    results (pd.DataFrame): DataFrame containing ground truth and model predictions.
-    """
-    out_path = os.path.join(config['output_dir'], 'SA_plots')
-    os.makedirs(out_path, exist_ok=True)
-
-    # Plotting model predictions vs ground truth
-    plt.figure(figsize=(8, 8))
-    plt.scatter(results['model_prediction'], results['vtec'], alpha=0.3, s=0.1, label='Predictions vs Ground Truth')
-    plt.xlabel('Model Prediction')
-    plt.ylabel('Ground Truth (VTEC)')
-    plt.plot([results['vtec'].min(), results['vtec'].max()], [results['vtec'].min(), results['vtec'].max()], 'r--', lw=1, label='Ideal Fit')
-    plt.title('Model Predictions vs Ground Truth')
-    plt.text(0.05, 0.95, f"RMSE: {metrics['RMSE']}\nMAE: {metrics['MAE']}", 
-             transform=plt.gca().transAxes, fontsize=12, verticalalignment='top', 
-             bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
-    plt.legend()
-    plt.axis('equal')
-    plt.grid(True)
-    plt.savefig(os.path.join(out_path, "predictions_vs_ground_truth.png"))
-    plt.close()
-
-    # Plotting residuals as histogram
-    plt.figure(figsize=(8, 8))
-    residuals = results['model_prediction'] - results['vtec']
-    plt.hist(residuals, bins=100, alpha=0.75, label='Residuals')
-    plt.xlabel('Residuals')
-    plt.ylabel('Frequency')
-    plt.title('Residuals Histogram (Model Pred. - GT SA)')
-    plt.text(0.05, 0.95, f"RMSE: {metrics['RMSE']}\nMAE: {metrics['MAE']}", 
-             transform=plt.gca().transAxes, fontsize=12, verticalalignment='top', 
-             bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(out_path, "residuals_histogram.png"))
-    plt.close()
-    
 
 def calculate_metrics(config, results):
-    """
-    Calculate global + per-station RMSE/MAE based on a distance filter.
-    Writes metrics.txt and station_metrics.csv under SA_plots.
-    """
-    # 1) Global metrics
-    rmse_global = np.sqrt(np.mean((results['model_prediction'] - results['vtec'])**2))
-    mae_global  = np.mean(np.abs(results['model_prediction'] - results['vtec']))
-    rmse_global, mae_global = round(rmse_global, 2), round(mae_global, 2)
-
-    # 2) Per-station metrics
-    station_rows = []
-    # for each station, compute distances to all points,
-    # filter by RADIUS_KM, then compute metrics
-    for station, (slat, slon) in STATION_COORDS.items():
-        # vectorized haversine across the DataFrame
-        dists = haversine(
-            slat, slon,
-            results['lat'].values,
-            results['lon'].values
-        )
-        mask = dists <= RADIUS_KM
-        subset = results[mask]
-
-        if not subset.empty:
-            rmse_s = np.sqrt(np.mean((subset['model_prediction'] - subset['vtec'])**2))
-            mae_s  = np.mean(np.abs(subset['model_prediction'] - subset['vtec']))
-            count = len(subset)
-        else:
-            rmse_s, mae_s, count = np.nan, np.nan, 0
-
-        station_rows.append({
-            'station': station,
-            'RMSE':    round(rmse_s, 2) if not np.isnan(rmse_s) else None,
-            'MAE':     round(mae_s, 2)  if not np.isnan(mae_s) else None,
-            'count':   count
-        })
-
-    df_stats = pd.DataFrame(station_rows).sort_values('RMSE', ascending=False, na_position='last')
-
-    # 3) Write metrics.txt
+    # Global
+    rmse = round(np.sqrt(np.mean((results['model_prediction'] - results['vtec'])**2)), 2)
+    mae = round(np.mean(np.abs(results['model_prediction'] - results['vtec'])), 2)
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
     os.makedirs(out_dir, exist_ok=True)
-    metrics_path = os.path.join(out_dir, 'metrics.txt')
-    with open(metrics_path, 'w') as f:
-        f.write(f"GLOBAL RMSE: {rmse_global}\n")
-        f.write(f"GLOBAL MAE: {mae_global}\n\n")
-        f.write("PER-STATION METRICS (within {} km):\n".format(RADIUS_KM))
-        for _, row in df_stats.iterrows():
-            f.write(f"  {row.station}: RMSE={row.RMSE}, MAE={row.MAE}, N={row['count']}\n")
+    metrics_file = os.path.join(out_dir, 'metrics.txt')
+    with open(metrics_file, 'w') as f:
+        f.write(f"GLOBAL RMSE: {rmse}\nGLOBAL MAE: {mae}\n")
 
-    # 4) Dump station_metrics.csv
-    csv_path = os.path.join(out_dir, 'station_metrics.csv')
-    df_stats.to_csv(csv_path, index=False)
+    # Per-station
+    stats = []
+    for station, (slat, slon) in STATION_COORDS.items():
+        dists = haversine(slat, slon,
+                          results['lat'].values,
+                          results['lon'].values)
+        subset = results[dists <= RADIUS_KM]
+        if not subset.empty:
+            r_s = round(np.sqrt(np.mean((subset['model_prediction'] - subset['vtec'])**2)), 2)
+            m_s = round(np.mean(np.abs(subset['model_prediction'] - subset['vtec'])), 2)
+            n = len(subset)
+        else:
+            r_s, m_s, n = None, None, 0
+        stats.append({'station': station, 'RMSE': r_s, 'MAE': m_s, 'count': n})
+    pd.DataFrame(stats).to_csv(os.path.join(out_dir, 'station_metrics.csv'), index=False)
+    return {'RMSE': rmse, 'MAE': mae}
 
-    return {"RMSE": rmse_global, "MAE": mae_global}
+
+def plot_results(config, results, metrics):
+    out_dir = os.path.join(config['output_dir'], 'SA_plots')
+    # Predictions vs Ground Truth
+    plt.figure(figsize=(8,8))
+    plt.scatter(results['model_prediction'], results['vtec'], s=0.1, alpha=0.3)
+    mn, mx = results['vtec'].min(), results['vtec'].max()
+    plt.plot([mn, mx], [mn, mx], 'r--')
+    plt.text(0.05, 0.95, f"RMSE: {metrics['RMSE']}\nMAE: {metrics['MAE']}",
+             transform=plt.gca().transAxes, va='top', bbox=dict(boxstyle='round', fc='white'))
+    plt.xlabel('Model Prediction')
+    plt.ylabel('VTEC (Ground Truth)')
+    plt.savefig(os.path.join(out_dir, 'pred_vs_gt.png'))
+    plt.close()
+
+    # Residual histogram
+    plt.figure(figsize=(8,8))
+    residuals = results['model_prediction'] - results['vtec']
+    plt.hist(residuals, bins=100, alpha=0.75)
+    plt.text(0.05, 0.95, f"RMSE: {metrics['RMSE']}\nMAE: {metrics['MAE']}",
+             transform=plt.gca().transAxes, va='top', bbox=dict(boxstyle='round', fc='white'))
+    plt.xlabel('Residuals')
+    plt.ylabel('Frequency')
+    plt.savefig(os.path.join(out_dir, 'residuals_hist.png'))
+    plt.close()
+
+
+def evaluate_single(config, mode, sw, lw):
+    # Update config for this run
+    cfg = config.copy()
+    cfg['mode'] = mode
+    if sw is not None: cfg['vlbi_sampling_weight'] = sw
+    if lw is not None: cfg['vlbi_loss_weight'] = lw
+    cfg['loss_fn'] = LOSS_FN
+
+    # Set output directory based on bash logic
+    exp_root = cfg.get('experiments_dir')
+    tag = f"SW{int(sw) if sw else 1}_LW{int(lw) if lw else 1}"
+    out_dir = os.path.join(exp_root, f"{mode}_{cfg['year']}_{cfg['doy']:03d}_{tag}")
+    cfg['output_dir'] = out_dir
+
+    # Skip existing
+    metrics_path = os.path.join(out_dir, 'SA_plots', 'metrics.txt')
+    if os.path.exists(metrics_path) and not cfg.get('force', False):
+        logging.info(f"Skipping {mode} {tag}, metrics exists")
+        return
+
+    logging.info(f"Evaluating {mode} with {tag}")
+    t0 = time.time()
+
+    # Load and filter data
+    csv_path = cfg['data']['GNSS_data_path']
+    if 'cluster' in csv_path:
+        csv_path = '/cluster/work/igp_psr/arrueegg/sa_dataset.csv'
+    sa_data = load_data(csv_path, cfg['doy'])
+
+    # Prepare encoder and inputs
+    sh_enc = None
+    if cfg['preprocessing'].get('SH_encoding'):
+        sh_enc = SphericalHarmonics(cfg['preprocessing']['SH_degree']).to(cfg['device'])
+    inputs = prepare_inputs(sa_data, cfg['device'], sh_enc)
+
+    # Ensemble inference
+    preds = []
+    for fn in os.listdir(os.path.join(out_dir, 'model')):
+        m = get_model(cfg).to(cfg['device'])
+        state = torch.load(os.path.join(out_dir, 'model', fn), map_location=cfg['device'])
+        m.load_state_dict(state['model_state_dict'])
+        m.eval()
+        with torch.no_grad(): preds.append(m(inputs).cpu().numpy())
+    ensemble = np.mean(preds, axis=0)
+
+    # Save results and metrics
+    res = sa_data.copy()
+    res['model_prediction'] = ensemble[:,0]
+    os.makedirs(os.path.join(out_dir, 'SA_plots'), exist_ok=True)
+    res.to_csv(os.path.join(out_dir, 'SA_plots', 'results.csv'), index=False)
+
+    metrics = calculate_metrics(cfg, res)
+    plot_results(cfg, res, metrics)
+    logging.info(f"Completed {mode} in {time.time()-t0:.1f}s")
+
 
 def main():
-    """
-    Main function to perform forward pass, evaluation, and visualization.
-    """
-    config = parse_config()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--doy", type=int, required=True)
+    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-run even if metrics exist")
+    args = parser.parse_args()
 
-    # Configure logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
-    logger = logging.getLogger()
+    # Load YAML config
+    base_cfg = parse_config()
+    base_cfg.update({
+        'year': args.year,
+        'doy': args.doy,
+        'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        'force': args.force
+    })
 
-    csv_file = '/home/space/internal/ggltmp/4Arno/sa_dataset.csv'
-    if "cluster" in config['data']['GNSS_data_path']:
-        csv_file = '/cluster/work/igp_psr/arrueegg/sa_dataset.csv'
-    doy = int(config['doy'])
+    # Logging
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s - %(message)s')
 
-    logger.info(f"Loading data for DOY {doy}")
-    sa_data = load_data(csv_file, doy)
+    # Define all jobs (mirrors bash)
+    jobs = [
+        ("GNSS", None, None),
+        ("Fusion", 1000.0, None),
+        ("Fusion", None, 1000.0),
+        ("DTEC_Fusion", None, 100.0),
+        ("DTEC_Fusion", 100.0, None),
+    ]
 
-    sh_encoder = None
-    if config['preprocessing']['SH_encoding']:
-        sh_encoder = SphericalHarmonics(legendre_polys=config['preprocessing']['SH_degree']).to(device)
+    for mode, sw, lw in jobs:
+        logging.info(f"Starting evaluation for {mode} with SW={sw}, LW={lw}")
+        evaluate_single(base_cfg, mode, sw, lw)
 
-    logger.info("Preparing inputs")
-    inputs = prepare_inputs(sa_data, device, sh_encoder)
+    logging.info("All evaluations have completed.")
 
-    ensemble_predictions = []
-
-    logger.info("Inference...")
-    model_paths = os.listdir(os.path.join(config['output_dir'], 'model'))
-    for model_path in model_paths:
-        model_path = os.path.join(config['output_dir'], 'model', model_path)
-        model = get_model(config).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device)['model_state_dict'])
-
-        model.eval()
-        with torch.no_grad():
-            predictions = model(inputs).cpu().numpy()
-        ensemble_predictions.append(predictions)
-
-    logger.info("Aggregating ensemble predictions")
-    ensemble_predictions = np.array(ensemble_predictions)
-    mean_predictions = np.mean(ensemble_predictions, axis=0)
-    
-    results = evaluate_results(sa_data, mean_predictions, config)
-
-    logger.info("Calculating metrics")
-    metrics = calculate_metrics(config, results)
-    logger.info(f"Metrics: {metrics}")
-
-    logger.info("Generating plots")
-    plot_results(config, results, metrics)
-
-    logger.info("Evaluation complete")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

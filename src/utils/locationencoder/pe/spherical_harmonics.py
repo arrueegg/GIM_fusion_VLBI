@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from .spherical_harmonics_ylm_Arno import SH as SH_analytic
-from .spherical_harmonics_closed_form import SH as SH_closed_form
 
 class SphericalHarmonics(nn.Module):
     def __init__(self, legendre_polys: int = 10, harmonics_calculation="analytic"):
@@ -16,9 +15,7 @@ class SphericalHarmonics(nn.Module):
         self.L, self.M = int(legendre_polys), int(legendre_polys)
         self.embedding_dim = self.L * self.M
 
-        if harmonics_calculation == "closed-form":
-            self.SH = SH_closed_form
-        elif harmonics_calculation == "analytic":
+        if harmonics_calculation == "analytic":
             self.SH = SH_analytic
 
     def forward(self, lonlat):

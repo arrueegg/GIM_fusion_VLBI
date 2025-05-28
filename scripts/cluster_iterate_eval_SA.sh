@@ -53,7 +53,7 @@ while IFS= read -r line; do
                 echo "submit: $line_year $line_doy"
                 sbatch submit_eval_SA.sh "$line_year $line_doy"
             else
-                echo $line_year $line_doy "are in year range but not in doy range"
+                echo $line_year $line_doy "not in specified range"
             fi 
         else
             if [[ "$line_year" -gt "$START_YEAR" && "$line_year" -lt "$END_YEAR" ]]; then
@@ -68,6 +68,6 @@ while IFS= read -r line; do
             fi
         fi
     else
-        echo "Skipping execution for $line_year $file_doy."
+        echo "metrics file already exists for $line_year $file_doy."
     fi
 done < "$DOY_LIST_FILE"
