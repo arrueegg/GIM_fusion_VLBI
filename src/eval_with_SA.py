@@ -141,8 +141,7 @@ def evaluate_single(config, mode, sw, lw):
     t0 = time.time()
 
     # Load and filter data
-    #csv_path = cfg['data']['GNSS_data_path']
-    csv_path = '/home/space/internal/ggltmp/4Arno/sa_dataset.csv'
+    csv_path = cfg['data']['GNSS_data_path']
     if 'cluster' in csv_path:
         csv_path = '/cluster/work/igp_psr/arrueegg/sa_dataset.csv'
     sa_data = load_data(csv_path, cfg['doy'])
