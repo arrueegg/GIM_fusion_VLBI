@@ -51,6 +51,7 @@ while IFS= read -r line; do
         if [[ "$START_YEAR" -eq "$END_YEAR" ]]; then
             if [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" && "$line_doy" -le "$END_DOY" ]]; then
                 echo "submit: $line_year $line_doy"
+                sleep 60
                 sbatch submit_eval_SA.sh "$line_year $line_doy"
             else
                 echo $line_year $line_doy "not in specified range"
@@ -58,12 +59,15 @@ while IFS= read -r line; do
         else
             if [[ "$line_year" -gt "$START_YEAR" && "$line_year" -lt "$END_YEAR" ]]; then
                 echo "submit: $line_year $line_doy"
+                sleep 60
                 sbatch submit_eval_SA.sh "$line_year $line_doy"
             elif [[ "$line_year" -eq "$START_YEAR" && "$line_doy" -ge "$START_DOY" ]]; then
                 echo "submit: $line_year $line_doy"
+                sleep 60
                 sbatch submit_eval_SA.sh "$line_year $line_doy"
             elif [[ "$line_year" -eq "$END_YEAR" && "$line_doy" -le "$END_DOY" ]]; then
                 echo "submit: $line_year $line_doy"
+                sleep 60
                 sbatch submit_eval_SA.sh "$line_year $line_doy"
             fi
         fi

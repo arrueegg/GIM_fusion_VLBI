@@ -1,0 +1,25 @@
+/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/eval_SA_results.py:86: SettingWithCopyWarning: 
+A value is trying to be set on a copy of a slice from a DataFrame.
+Try using .loc[row_indexer,col_indexer] = value instead
+
+See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+  df['global_RMSE'] = pd.to_numeric(df['global_RMSE'], errors='coerce')
+/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/eval_SA_results.py:87: SettingWithCopyWarning: 
+A value is trying to be set on a copy of a slice from a DataFrame.
+Try using .loc[row_indexer,col_indexer] = value instead
+
+See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+  df['global_MAE'] = pd.to_numeric(df['global_MAE'], errors='coerce')
+/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/eval_SA_results.py:127: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  plt.boxplot(data_rmse, labels=labels); plt.title('Global RMSE by Data Mode'); plt.ylabel('RMSE')
+/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/eval_SA_results.py:130: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  plt.boxplot(data_mae, labels=labels); plt.title('Global MAE by Data Mode'); plt.ylabel('MAE')
+/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/eval_SA_results.py:146: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  plt.boxplot(data_s_rmse, labels=labels); plt.title(f'{st.capitalize()} RMSE by Data Mode')
+/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/scripts/eval_SA_results.py:149: MatplotlibDeprecationWarning: The 'labels' parameter of boxplot() has been renamed 'tick_labels' since Matplotlib 3.9; support for the old name will be dropped in 3.11.
+  plt.boxplot(data_s_mae, labels=labels); plt.title(f'{st.capitalize()} MAE by Data Mode')
+Evaluating results...
+Number of experiments processed in total: 1045
+Number of experiments where all 5 scenarios were executed successfully: 1035
+Plotting boxplots for station kokee...
+None
