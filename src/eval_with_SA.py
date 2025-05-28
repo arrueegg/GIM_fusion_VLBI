@@ -126,7 +126,7 @@ def evaluate_single(config, mode, sw, lw):
     cfg['loss_fn'] = LOSS_FN
 
     # Set output directory based on bash logic
-    exp_root = cfg.get('experiments_dir')
+    exp_root = cfg.get('output_dir')
     tag = f"SW{int(sw) if sw else 1}_LW{int(lw) if lw else 1}"
     out_dir = os.path.join(exp_root, f"{mode}_{cfg['year']}_{cfg['doy']:03d}_{tag}")
     cfg['output_dir'] = out_dir
@@ -141,7 +141,8 @@ def evaluate_single(config, mode, sw, lw):
     t0 = time.time()
 
     # Load and filter data
-    csv_path = cfg['data']['GNSS_data_path']
+    #csv_path = cfg['data']['GNSS_data_path']
+    csv_path = '/home/space/internal/ggltmp/4Arno/sa_dataset.csv'
     if 'cluster' in csv_path:
         csv_path = '/cluster/work/igp_psr/arrueegg/sa_dataset.csv'
     sa_data = load_data(csv_path, cfg['doy'])
@@ -188,7 +189,8 @@ def main():
         'year': args.year,
         'doy': args.doy,
         'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-        'force': args.force
+        'force': args.force,
+        'output_dir': 'experiments/'
     })
 
     # Logging
@@ -197,11 +199,11 @@ def main():
 
     # Define all jobs (mirrors bash)
     jobs = [
-        ("GNSS", None, None),
-        ("Fusion", 1000.0, None),
-        ("Fusion", None, 1000.0),
-        ("DTEC_Fusion", None, 100.0),
-        ("DTEC_Fusion", 100.0, None),
+        ("GNSS", 1, 1),
+        ("Fusion", 1000.0, 1),
+        ("Fusion", 1, 1000.0),
+        ("DTEC_Fusion", 1, 100.0),
+        ("DTEC_Fusion", 100.0, 1),
     ]
 
     for mode, sw, lw in jobs:
