@@ -91,77 +91,121 @@ def calculate_metrics_old(config, results):
     return {'RMSE': rmse, 'MAE': mae}
 
 def calculate_metrics(config, results):
-    # Raw residuals
+    # 1) Compute raw residuals
     results['residuals_raw'] = results['model_prediction'] - results['vtec']
 
-    # Bias
-    bias = np.mean(results['residuals_raw'])
+    # 2) Compute global bias
+    bias_global = np.mean(results['residuals_raw'])
 
-    # Bias-corrected residuals
-    results['residuals_bias_corrected'] = results['residuals_raw'] - bias
+    # 3) Compute global‐bias‐corrected residuals
+    results['residuals_bc_global'] = results['residuals_raw'] - bias_global
 
-    # Global metrics — raw
+    # 4) GLOBAL RAW METRICS
     rmse_raw = round(np.sqrt(np.mean(results['residuals_raw']**2)), 2)
-    mae_raw = round(np.mean(np.abs(results['residuals_raw'])), 2)
-    std_raw = round(np.std(results['residuals_raw']), 2)
+    mae_raw  = round(np.mean(np.abs(results['residuals_raw'])), 2)
+    std_raw  = round(np.std(results['residuals_raw']), 2)
     corr_raw = round(np.corrcoef(results['model_prediction'], results['vtec'])[0, 1], 3)
 
-    # Global metrics — bias-corrected
-    rmse_bc = round(np.sqrt(np.mean(results['residuals_bias_corrected']**2)), 2)
-    mae_bc = round(np.mean(np.abs(results['residuals_bias_corrected'])), 2)
-    std_bc = round(np.std(results['residuals_bias_corrected']), 2)
-    corr_bc = round(np.corrcoef(results['model_prediction'] - bias, results['vtec'])[0, 1], 3)
+    # 5) GLOBAL-BIAS-CORRECTED METRICS
+    rmse_bcg = round(np.sqrt(np.mean(results['residuals_bc_global']**2)), 2)
+    mae_bcg  = round(np.mean(np.abs(results['residuals_bc_global'])), 2)
+    std_bcg  = round(np.std(results['residuals_bc_global']), 2)
+    # Correlation between (prediction − bias_global) and true VTEC
+    corr_bcg = round(np.corrcoef(results['model_prediction'] - bias_global, results['vtec'])[0, 1], 3)
 
-    # Write to file
+    # 6) PER-STATION METRICS
+    station_stats = []
+    for station, (slat, slon) in STATION_COORDS.items():
+        dists = haversine(
+            slat, slon,
+            results['lat'].values,
+            results['lon'].values
+        )
+        subset = results[dists <= RADIUS_KM]
+
+        if not subset.empty:
+            # 6a) Raw‐only at station
+            rmse_raw_s = round(np.sqrt(np.mean(subset['residuals_raw']**2)), 2)
+            mae_raw_s  = round(np.mean(np.abs(subset['residuals_raw'])), 2)
+
+            # 6b) Global‐bias‐corrected at station
+            rmse_gs = round(np.sqrt(np.mean(subset['residuals_bc_global']**2)), 2)
+            mae_gs  = round(np.mean(np.abs(subset['residuals_bc_global'])),   2)
+
+            # 6c) Local bias for this station
+            local_bias = np.mean(subset['residuals_raw'])
+            # Subtract local bias
+            subset['residuals_bc_local'] = subset['residuals_raw'] - local_bias
+            rmse_ls = round(np.sqrt(np.mean(subset['residuals_bc_local']**2)), 2)
+            mae_ls  = round(np.mean(np.abs(subset['residuals_bc_local'])),      2)
+
+            count_s = len(subset)
+        else:
+            rmse_raw_s, mae_raw_s = None, None
+            rmse_gs, mae_gs     = None, None
+            rmse_ls, mae_ls     = None, None
+            count_s             = 0
+
+        station_stats.append({
+            'station':      station,
+            'count':        count_s,
+            'RMSE_raw':     rmse_raw_s,
+            'MAE_raw':      mae_raw_s,
+            'RMSE_globCor': rmse_gs,
+            'MAE_globCor':  mae_gs,
+            'RMSE_locCor':  rmse_ls,
+            'MAE_locCor':   mae_ls
+        })
+
+    # 7) WRITE EVERYTHING INTO metrics.txt
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
     os.makedirs(out_dir, exist_ok=True)
     metrics_file = os.path.join(out_dir, 'metrics.txt')
+
     with open(metrics_file, 'w') as f:
-        f.write(f"GLOBAL BIAS: {round(bias, 2)}\n\n")
+        # Global bias
+        f.write(f"GLOBAL BIAS: {round(bias_global, 2)}\n\n")
 
-        f.write("RAW METRICS:\n")
-        f.write(f"RMSE: {rmse_raw}\nMAE: {mae_raw}\nSTD: {std_raw}\nCorrelation: {corr_raw}\n\n")
+        # Raw global metrics
+        f.write("RAW GLOBAL METRICS:\n")
+        f.write(f"  RMSE:        {rmse_raw}\n")
+        f.write(f"  MAE:         {mae_raw}\n")
+        f.write(f"  STD:         {std_raw}\n")
+        f.write(f"  Correlation: {corr_raw}\n\n")
 
-        f.write("BIAS-CORRECTED METRICS:\n")
-        f.write(f"RMSE: {rmse_bc}\nMAE: {mae_bc}\nSTD: {std_bc}\nCorrelation: {corr_bc}\n")
+        # Global-bias-corrected global metrics
+        f.write("GLOBAL-BIAS-CORRECTED GLOBAL METRICS:\n")
+        f.write(f"  RMSE:        {rmse_bcg}\n")
+        f.write(f"  MAE:         {mae_bcg}\n")
+        f.write(f"  STD:         {std_bcg}\n")
+        f.write(f"  Correlation: {corr_bcg}\n\n")
 
-    # Per‐station (raw and bias-corrected)
-    stats = []
-    for station, (slat, slon) in STATION_COORDS.items():
-        dists = haversine(slat, slon,
-                          results['lat'].values,
-                          results['lon'].values)
-        subset = results[dists <= RADIUS_KM]
-        if not subset.empty:
-            # Raw metrics
-            rmse_raw_s = round(np.sqrt(np.mean(subset['residuals_raw']**2)), 2)
-            mae_raw_s  = round(np.mean(np.abs(subset['residuals_raw'])), 2)
-            # Bias-corrected metrics
-            rmse_bc_s  = round(np.sqrt(np.mean(subset['residuals_bias_corrected']**2)), 2)
-            mae_bc_s   = round(np.mean(np.abs(subset['residuals_bias_corrected'])), 2)
-            count_s    = len(subset)
-        else:
-            rmse_raw_s, mae_raw_s, rmse_bc_s, mae_bc_s, count_s = None, None, None, None, 0
+        # Per-station header
+        f.write(f"PER-STATION METRICS (within {RADIUS_KM:.0f} km):\n")
+        f.write("  {:<12s} {:>6s} {:>10s} {:>10s} {:>12s} {:>12s} {:>12s} {:>12s}\n"
+                .format("Station", "Count",
+                        "RMSE_raw", "MAE_raw",
+                        "RMSE_globCor", "MAE_globCor",
+                        "RMSE_locCor",  "MAE_locCor"))
 
-        stats.append({
-            'station': station,
-            'count': count_s,
-            'RMSE_raw':    rmse_raw_s,
-            'MAE_raw':     mae_raw_s,
-            'RMSE_bc':     rmse_bc_s,
-            'MAE_bc':      mae_bc_s
-        })
+        # Per-station rows
+        for s in station_stats:
+            f.write("  {:<12s} {:>6d} {:>10s} {:>10s} {:>12s} {:>12s} {:>12s} {:>12s}\n".format(
+                s['station'],
+                s['count'],
+                str(s['RMSE_raw']) if s['RMSE_raw'] is not None else "   N/A",
+                str(s['MAE_raw'])  if s['MAE_raw']  is not None else "   N/A",
+                str(s['RMSE_globCor']) if s['RMSE_globCor'] is not None else "   N/A",
+                str(s['MAE_globCor'])  if s['MAE_globCor']  is not None else "   N/A",
+                str(s['RMSE_locCor']) if s['RMSE_locCor'] is not None else "   N/A",
+                str(s['MAE_locCor'])  if s['MAE_locCor']  is not None else "   N/A"
+            ))
 
-    # Save station‐level CSV
-    pd.DataFrame(stats).to_csv(
-        os.path.join(out_dir, 'station_metrics.csv'),
-        index=False
-    )
-
+    # 8) Return keys for plotting or further use
     return {
-        'BIAS': round(bias, 2),
-        'RMSE_raw': rmse_raw, 'MAE_raw': mae_raw, 'STD_raw': std_raw, 'CORR_raw': corr_raw,
-        'RMSE_bc': rmse_bc, 'MAE_bc': mae_bc, 'STD_bc': std_bc, 'CORR_bc': corr_bc,
+        'BIAS':         round(bias_global, 2),
+        'RMSE_raw':     rmse_raw,  'MAE_raw':  mae_raw,  'STD_raw':  std_raw,  'CORR_raw':  corr_raw,
+        'RMSE_bcg':     rmse_bcg,  'MAE_bcg':  mae_bcg,  'STD_bcg':  std_bcg,  'CORR_bcg':  corr_bcg
     }
 
 def plot_results(config, results, metrics):
