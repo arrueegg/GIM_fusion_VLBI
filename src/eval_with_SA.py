@@ -63,7 +63,7 @@ def prepare_inputs(sa_data, device, sh_encoder):
                      dim=1)
 
 
-def calculate_metrics(config, results):
+def calculate_metrics_old(config, results):
     # Global
     rmse = round(np.sqrt(np.mean((results['model_prediction'] - results['vtec'])**2)), 2)
     mae = round(np.mean(np.abs(results['model_prediction'] - results['vtec'])), 2)
@@ -90,30 +90,126 @@ def calculate_metrics(config, results):
     pd.DataFrame(stats).to_csv(os.path.join(out_dir, 'station_metrics.csv'), index=False)
     return {'RMSE': rmse, 'MAE': mae}
 
+def calculate_metrics(config, results):
+    # Raw residuals
+    results['residuals_raw'] = results['model_prediction'] - results['vtec']
+
+    # Bias
+    bias = np.mean(results['residuals_raw'])
+
+    # Bias-corrected residuals
+    results['residuals_bias_corrected'] = results['residuals_raw'] - bias
+
+    # Global metrics — raw
+    rmse_raw = round(np.sqrt(np.mean(results['residuals_raw']**2)), 2)
+    mae_raw = round(np.mean(np.abs(results['residuals_raw'])), 2)
+    std_raw = round(np.std(results['residuals_raw']), 2)
+    corr_raw = round(np.corrcoef(results['model_prediction'], results['vtec'])[0, 1], 3)
+
+    # Global metrics — bias-corrected
+    rmse_bc = round(np.sqrt(np.mean(results['residuals_bias_corrected']**2)), 2)
+    mae_bc = round(np.mean(np.abs(results['residuals_bias_corrected'])), 2)
+    std_bc = round(np.std(results['residuals_bias_corrected']), 2)
+    corr_bc = round(np.corrcoef(results['model_prediction'] - bias, results['vtec'])[0, 1], 3)
+
+    # Write to file
+    out_dir = os.path.join(config['output_dir'], 'SA_plots')
+    os.makedirs(out_dir, exist_ok=True)
+    metrics_file = os.path.join(out_dir, 'metrics.txt')
+    with open(metrics_file, 'w') as f:
+        f.write(f"GLOBAL BIAS: {round(bias, 2)}\n\n")
+
+        f.write("RAW METRICS:\n")
+        f.write(f"RMSE: {rmse_raw}\nMAE: {mae_raw}\nSTD: {std_raw}\nCorrelation: {corr_raw}\n\n")
+
+        f.write("BIAS-CORRECTED METRICS:\n")
+        f.write(f"RMSE: {rmse_bc}\nMAE: {mae_bc}\nSTD: {std_bc}\nCorrelation: {corr_bc}\n")
+
+    # Per‐station (raw and bias-corrected)
+    stats = []
+    for station, (slat, slon) in STATION_COORDS.items():
+        dists = haversine(slat, slon,
+                          results['lat'].values,
+                          results['lon'].values)
+        subset = results[dists <= RADIUS_KM]
+        if not subset.empty:
+            # Raw metrics
+            rmse_raw_s = round(np.sqrt(np.mean(subset['residuals_raw']**2)), 2)
+            mae_raw_s  = round(np.mean(np.abs(subset['residuals_raw'])), 2)
+            # Bias-corrected metrics
+            rmse_bc_s  = round(np.sqrt(np.mean(subset['residuals_bias_corrected']**2)), 2)
+            mae_bc_s   = round(np.mean(np.abs(subset['residuals_bias_corrected'])), 2)
+            count_s    = len(subset)
+        else:
+            rmse_raw_s, mae_raw_s, rmse_bc_s, mae_bc_s, count_s = None, None, None, None, 0
+
+        stats.append({
+            'station': station,
+            'count': count_s,
+            'RMSE_raw':    rmse_raw_s,
+            'MAE_raw':     mae_raw_s,
+            'RMSE_bc':     rmse_bc_s,
+            'MAE_bc':      mae_bc_s
+        })
+
+    # Save station‐level CSV
+    pd.DataFrame(stats).to_csv(
+        os.path.join(out_dir, 'station_metrics.csv'),
+        index=False
+    )
+
+    return {
+        'BIAS': round(bias, 2),
+        'RMSE_raw': rmse_raw, 'MAE_raw': mae_raw, 'STD_raw': std_raw, 'CORR_raw': corr_raw,
+        'RMSE_bc': rmse_bc, 'MAE_bc': mae_bc, 'STD_bc': std_bc, 'CORR_bc': corr_bc,
+    }
 
 def plot_results(config, results, metrics):
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
-    # Predictions vs Ground Truth
-    plt.figure(figsize=(8,8))
+
+    # 1) Predictions vs Ground Truth (raw)
+    plt.figure(figsize=(8, 8))
     plt.scatter(results['model_prediction'], results['vtec'], s=0.1, alpha=0.3)
     mn, mx = results['vtec'].min(), results['vtec'].max()
     plt.plot([mn, mx], [mn, mx], 'r--')
-    plt.text(0.05, 0.95, f"RMSE: {metrics['RMSE']}\nMAE: {metrics['MAE']}",
-             transform=plt.gca().transAxes, va='top', bbox=dict(boxstyle='round', fc='white'))
+    plt.text(
+        0.05, 0.95,
+        f"RMSE: {metrics['RMSE_raw']}\nMAE: {metrics['MAE_raw']}",
+        transform=plt.gca().transAxes, va='top',
+        bbox=dict(boxstyle='round', fc='white')
+    )
     plt.xlabel('Model Prediction')
     plt.ylabel('VTEC (Ground Truth)')
     plt.savefig(os.path.join(out_dir, 'pred_vs_gt.png'))
     plt.close()
 
-    # Residual histogram
-    plt.figure(figsize=(8,8))
-    residuals = results['model_prediction'] - results['vtec']
-    plt.hist(residuals, bins=100, alpha=0.75)
-    plt.text(0.05, 0.95, f"RMSE: {metrics['RMSE']}\nMAE: {metrics['MAE']}",
-             transform=plt.gca().transAxes, va='top', bbox=dict(boxstyle='round', fc='white'))
-    plt.xlabel('Residuals')
+    # 2) Raw residual histogram
+    plt.figure(figsize=(8, 8))
+    residuals_raw = results['model_prediction'] - results['vtec']
+    plt.hist(residuals_raw, bins=100, alpha=0.75, edgecolor='black', linewidth=0.5)
+    plt.text(
+        0.05, 0.95,
+        f"RMSE: {metrics['RMSE_raw']}\nMAE: {metrics['MAE_raw']}",
+        transform=plt.gca().transAxes, va='top',
+        bbox=dict(boxstyle='round', fc='white')
+    )
+    plt.xlabel('Residuals (raw)')
     plt.ylabel('Frequency')
     plt.savefig(os.path.join(out_dir, 'residuals_hist.png'))
+    plt.close()
+
+    # 3) Bias-corrected residual histogram with outlined bars
+    plt.figure(figsize=(8, 8))
+    plt.hist(results['residuals_bias_corrected'], bins=100, alpha=0.75, edgecolor='black', linewidth=0.5)
+    plt.text(
+        0.05, 0.95,
+        f"STD: {metrics['STD_bc']}\nBias: {metrics['BIAS']}",
+        transform=plt.gca().transAxes, va='top',
+        bbox=dict(boxstyle='round', fc='white')
+    )
+    plt.xlabel('Residuals (bias-corrected)')
+    plt.ylabel('Frequency')
+    plt.savefig(os.path.join(out_dir, 'residuals_bias_corrected_hist.png'))
     plt.close()
 
 

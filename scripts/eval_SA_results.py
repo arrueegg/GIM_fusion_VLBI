@@ -71,85 +71,221 @@ def read_experiment(experiment_folder, experiment_name):
     return df_row
 
 def evaluate(df):
+    # ——————————————————————————————————————————————
+    # 1) Initial filtering (exactly as before)
+    # ——————————————————————————————————————————————
     print("Number of experiments processed in total:", len(df))
     group_columns = ['data_mode', 'training_vlbi_loss_weight', 'training_vlbi_sampling_weight']
-    expected = {('GNSS',1,1),('Fusion',1000,1),('Fusion',1,1000),('DTEC_Fusion',100,1),('DTEC_Fusion',1,100)}
-    name_map = {('GNSS',1,1):'GNSS',('Fusion',1000,1):'Fusion LW',('Fusion',1,1000):'Fusion SW',
-                ('DTEC_Fusion',100,1):'DTEC LW',('DTEC_Fusion',1,100):'DTEC SW'}
+    expected = {
+        ('GNSS', 1, 1),
+        ('Fusion', 1000, 1),
+        ('Fusion', 1, 1000),
+        ('DTEC_Fusion', 100, 1),
+        ('DTEC_Fusion', 1, 100)
+    }
+    name_map = {
+        ('GNSS', 1, 1): 'GNSS',
+        ('Fusion', 1000, 1): 'Fusion LW',
+        ('Fusion', 1, 1000): 'Fusion SW',
+        ('DTEC_Fusion', 100, 1): 'DTEC LW',
+        ('DTEC_Fusion', 1, 100): 'DTEC SW'
+    }
+
+    # 1a) Keep only DOYs where all 5 group combos are present
     valid_doys = df.groupby('doy').filter(
         lambda g: set(map(tuple, g[group_columns].values)) == expected
     )['doy'].unique()
+
     df = df[df['doy'].isin(valid_doys)]
     print("Number of experiments where all 5 scenarios were executed successfully:", len(df))
 
-    # ensure numeric
+    # ——————————————————————————————————————————————
+    # 2) Force numeric columns and find station list
+    # ——————————————————————————————————————————————
     df['global_RMSE'] = pd.to_numeric(df['global_RMSE'], errors='coerce')
     df['global_MAE'] = pd.to_numeric(df['global_MAE'], errors='coerce')
-    stations = sorted([c[:-5] for c in df.columns if c.endswith('_RMSE') and c!='global_RMSE'])
 
+    # All columns that end with "_RMSE" except "global_RMSE"
+    stations = sorted(
+        [c[:-5] for c in df.columns if c.endswith('_RMSE') and c != 'global_RMSE']
+    )
+
+    # ——————————————————————————————————————————————
+    # 3) Group the DataFrame once (but we will pull groups explicitly in a fixed order)
+    # ——————————————————————————————————————————————
     df_mode = df.groupby(group_columns)
 
-    # Global histograms
+    # Define a fixed, explicit order for the groups
+    group_keys = list(name_map.keys())
+    labels = [name_map[k] for k in group_keys]
+
+    # ——————————————————————————————————————————————
+    # 4) Global histograms (unchanged)
+    # ——————————————————————————————————————————————
     bins_rmse = np.linspace(df['global_RMSE'].min(), df['global_RMSE'].max(), 20)
     bins_mae = np.linspace(df['global_MAE'].min(), df['global_MAE'].max(), 20)
     plt.figure(figsize=(14,6))
-    plt.subplot(1,2,1)
-    for name, grp in df_mode:
-        plt.hist(grp['global_RMSE'], bins=bins_rmse, alpha=0.5, label=name_map[name], edgecolor='black')
-    plt.title('Global RMSE by Data Mode'); plt.xlabel('RMSE'); plt.legend()
-    plt.subplot(1,2,2)
-    for name, grp in df_mode:
-        plt.hist(grp['global_MAE'], bins=bins_mae, alpha=0.5, label=name_map[name], edgecolor='black')
-    plt.title('Global MAE by Data Mode'); plt.xlabel('MAE'); plt.legend()
-    plt.tight_layout(); plt.savefig('scripts/RMSE_MAE_hist_by_data_mode.png', dpi=300); plt.close()
 
-    # Per-station histograms
+    plt.subplot(1,2,1)
+    for key in group_keys:
+        grp = df_mode.get_group(key)
+        plt.hist(grp['global_RMSE'].dropna(), bins=bins_rmse,
+                 alpha=0.5, label=name_map[key], edgecolor='black')
+    plt.title('Global RMSE by Data Mode')
+    plt.xlabel('RMSE')
+    plt.legend()
+
+    plt.subplot(1,2,2)
+    for key in group_keys:
+        grp = df_mode.get_group(key)
+        plt.hist(grp['global_MAE'].dropna(), bins=bins_mae,
+                 alpha=0.5, label=name_map[key], edgecolor='black')
+    plt.title('Global MAE by Data Mode')
+    plt.xlabel('MAE')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig('scripts/RMSE_MAE_hist_by_data_mode.png', dpi=300)
+    plt.close()
+
+    # ——————————————————————————————————————————————
+    # 5) Per‐station histograms (unchanged, but dropna())
+    # ——————————————————————————————————————————————
     for st in stations:
         bins_st_rmse = np.linspace(df[f'{st}_RMSE'].min(), df[f'{st}_RMSE'].max(), 20)
         bins_st_mae  = np.linspace(df[f'{st}_MAE'].min(),  df[f'{st}_MAE'].max(),  20)
+
         plt.figure(figsize=(14,6))
         plt.subplot(1,2,1)
-        for name, grp in df_mode:
-            plt.hist(grp[f'{st}_RMSE'], bins=bins_st_rmse, alpha=0.5, label=name_map[name], edgecolor='black')
-        plt.title(f'{st.capitalize()} RMSE by Data Mode'); plt.xlabel('RMSE'); plt.legend()
+        for key in group_keys:
+            grp = df_mode.get_group(key)
+            plt.hist(grp[f'{st}_RMSE'].dropna(), bins=bins_st_rmse,
+                     alpha=0.5, label=name_map[key], edgecolor='black')
+        plt.title(f'{st.capitalize()} RMSE by Data Mode')
+        plt.xlabel('RMSE')
+        plt.legend()
+
         plt.subplot(1,2,2)
-        for name, grp in df_mode:
-            plt.hist(grp[f'{st}_MAE'], bins=bins_st_mae, alpha=0.5, label=name_map[name], edgecolor='black')
-        plt.title(f'{st.capitalize()} MAE by Data Mode'); plt.xlabel('MAE'); plt.legend()
-        plt.tight_layout(); plt.savefig(f'scripts/{st}_hist_by_data_mode.png', dpi=300); plt.close()
+        for key in group_keys:
+            grp = df_mode.get_group(key)
+            plt.hist(grp[f'{st}_MAE'].dropna(), bins=bins_st_mae,
+                     alpha=0.5, label=name_map[key], edgecolor='black')
+        plt.title(f'{st.capitalize()} MAE by Data Mode')
+        plt.xlabel('MAE')
+        plt.legend()
 
-    # Global boxplots
+        plt.tight_layout()
+        plt.savefig(f'scripts/{st}_hist_by_data_mode.png', dpi=300)
+        plt.close()
+
+    # ——————————————————————————————————————————————
+    # 6) Global boxplots (using the same raw arrays, dropna)
+    # ——————————————————————————————————————————————
+    data_rmse = []
+    data_mae  = []
+    for key in group_keys:
+        grp = df_mode.get_group(key)
+        data_rmse.append(grp['global_RMSE'].dropna().values)
+        data_mae.append(grp['global_MAE'].dropna().values)
+
     plt.figure(figsize=(12,6))
-    data_rmse = [grp['global_RMSE'].values for _,grp in df_mode]
-    data_mae  = [grp['global_MAE'].values  for _,grp in df_mode]
-    labels = list(name_map.values())
     plt.subplot(1,2,1)
-    plt.boxplot(data_rmse, labels=labels); plt.title('Global RMSE by Data Mode'); plt.ylabel('RMSE')
+    plt.boxplot(data_rmse, labels=labels)
+    plt.title('Global RMSE by Data Mode')
+    plt.ylabel('RMSE')
     plt.ylim(3, 12)
-    plt.subplot(1,2,2)
-    plt.boxplot(data_mae, labels=labels); plt.title('Global MAE by Data Mode'); plt.ylabel('MAE')
-    plt.ylim(3, 12) 
-    plt.tight_layout(); plt.savefig('scripts/RMSE_MAE_boxplots_by_data_mode.png', dpi=300)
 
-    # Global boxplots no outliers
+    plt.subplot(1,2,2)
+    plt.boxplot(data_mae, labels=labels)
+    plt.title('Global MAE by Data Mode')
+    plt.ylabel('MAE')
+    plt.ylim(3, 12)
+
+    plt.tight_layout()
+    plt.savefig('scripts/RMSE_MAE_boxplots_by_data_mode.png', dpi=300)
+    # (No change for the “no outliers” plot aside from consistent data)
     plt.subplot(1,2,1); plt.ylim(3,12)
     plt.subplot(1,2,2); plt.ylim(2,8)
-    plt.tight_layout(); plt.savefig('scripts/RMSE_MAE_boxplots_by_data_mode_nooutliers.png', dpi=300)
+    plt.tight_layout()
+    plt.savefig('scripts/RMSE_MAE_boxplots_by_data_mode_nooutliers.png', dpi=300)
+    plt.close()
 
-    # Per-station boxplots
+    # ——————————————————————————————————————————————
+    # 7) Per‐station boxplots (again, dropna())
+    # ——————————————————————————————————————————————
     for st in stations:
         print(f"Plotting boxplots for station {st}...")
-        data_s_rmse = [grp[f'{st}_RMSE'].dropna().values for _, grp in df_mode]
-        data_s_mae  = [grp[f'{st}_MAE'].dropna().values  for _, grp in df_mode]
+        data_s_rmse = []
+        data_s_mae  = []
+        for key in group_keys:
+            grp = df_mode.get_group(key)
+            data_s_rmse.append(grp[f'{st}_RMSE'].dropna().values)
+            data_s_mae.append(grp[f'{st}_MAE'].dropna().values)
+
         plt.figure(figsize=(12,6))
         plt.subplot(1,2,1)
-        plt.boxplot(data_s_rmse, labels=labels); plt.title(f'{st.capitalize()} RMSE by Data Mode')
+        plt.boxplot(data_s_rmse, labels=labels)
+        plt.title(f'{st.capitalize()} RMSE by Data Mode')
         plt.ylim(0, 15)
-        plt.subplot(1,2,2)
-        plt.boxplot(data_s_mae, labels=labels); plt.title(f'{st.capitalize()} MAE by Data Mode')
-        plt.ylim(0, 12) 
-        plt.tight_layout(); plt.savefig(f'scripts/{st}_box_by_data_mode.png', dpi=300)
 
+        plt.subplot(1,2,2)
+        plt.boxplot(data_s_mae, labels=labels)
+        plt.title(f'{st.capitalize()} MAE by Data Mode')
+        plt.ylim(0, 12)
+
+        plt.tight_layout()
+        plt.savefig(f'scripts/{st}_box_by_data_mode.png', dpi=300)
+        plt.close()
+
+    # ——————————————————————————————————————————————
+    # 8) Compute groupby‐medians and reorder rows exactly as group_keys
+    # ——————————————————————————————————————————————
+    median_values = df.groupby(group_columns).median(numeric_only=True)
+
+    # Reindex so the rows come in the same order as our group_keys list
+    median_values = median_values.reindex(group_keys)
+
+    # Extract just the columns we need
+    global_metrics = median_values[['global_RMSE', 'global_MAE']].copy()
+    station_cols = [c for c in median_values.columns if any(st in c for st in stations)]
+    station_metrics = median_values[station_cols].copy()
+
+    # Now rename the index from a tuple (e.g. ('GNSS',1,1)) → human label ("GNSS", etc.)
+    global_metrics.index = [name_map[k] for k in global_metrics.index]
+    station_metrics.index = [name_map[k] for k in station_metrics.index]
+
+    # ——————————————————————————————————————————————
+    # 9) Sanity‐check: compare each group’s raw‐array median vs. the Pandas median
+    # ——————————————————————————————————————————————
+    #    If anything does NOT match, print a warning.
+    for i, key in enumerate(group_keys):
+        # Recompute median from the raw arrays we used for boxplot
+        raw_median_rmse = np.median(data_rmse[i])
+        pd_median_rmse  = global_metrics.loc[name_map[key], 'global_RMSE']
+
+        if not np.isclose(raw_median_rmse, pd_median_rmse, atol=1e-8):
+            print(f"WARNING: mismatch in 'global_RMSE' median for {name_map[key]}: "
+                  f"boxplot‐array median={raw_median_rmse:.6f} vs Pandas median={pd_median_rmse:.6f}")
+
+        raw_median_mae = np.median(data_mae[i])
+        pd_median_mae  = global_metrics.loc[name_map[key], 'global_MAE']
+
+        if not np.isclose(raw_median_mae, pd_median_mae, atol=1e-8):
+            print(f"WARNING: mismatch in 'global_MAE' median for {name_map[key]}: "
+                  f"boxplot‐array median={raw_median_mae:.6f} vs Pandas median={pd_median_mae:.6f}")
+
+    # ——————————————————————————————————————————————
+    # 10) Save CSVs (now guaranteed to line up with the boxplot’s order & values)
+    # ——————————————————————————————————————————————
+    global_metrics.to_csv('scripts/global_median_values.csv',
+                          header=True,
+                          index_label='Method')
+
+    station_metrics.to_csv('scripts/station_median_values.csv',
+                           header=True,
+                           index_label='Method')
+
+    print("Saved global_median_values.csv and station_median_values.csv in 'scripts/'")
 
 def main():
     """
