@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
 import re
 from io import StringIO
 import warnings
@@ -19,21 +20,61 @@ from models.model import get_model
 warnings.filterwarnings("ignore")
 
 # Station definitions for per-station metrics
+# ----------------------------------------------------------------------------
+# Mapping from VLBI station codes (Station_Name) → (Latitude, Longitude)
+# as extracted from ivstrf_stations_with_location_names.csv, 
+# using the coordinates you supplied in STATION_COORDS.
+# ----------------------------------------------------------------------------
+
 STATION_COORDS = {
-    'Kokee': (22.13, -159.66),
-    'Hobart': (-42.80, 147.44),
-    'Ishioka': (36.21, 140.22),
-    'Santa Maria': (36.98, -25.16),
-    'Onsala': (57.40, 11.92),
-    'Wettzell': (49.15, 12.88),
-    'Yebes': (40.52, -3.09),
-    'Matera': (40.65, 16.70),
-    'Sejong': (36.52, 127.30),
-    'Warkworth': (-36.43, 174.66),
-    'Westford': (42.61, -71.49),
-    'Forteleza': (-3.88, -38.43),
-    # add more stations here…
+    # Kokee (22.13, -159.66)  
+    'KAUAI':    (22.13,   -159.66),
+    'KOKEE':    (22.13,   -159.66),
+    'KOKEE12M': (22.13,   -159.66),
+
+    # Hobart (−42.80, 147.44)
+    'HOBART26': ( -42.80,  147.44),
+    'HOBART12': ( -42.80,  147.44),
+
+    # Ishioka (36.21, 140.22)
+    'ISHIOKA':  (36.21,   140.22),
+
+    # Santa Maria (36.98, −25.16)
+    'RAEGSMAR': (36.98,   -25.16),
+
+    # Onsala (57.40, 11.92)
+    'ONSALA60':  (57.40,  11.92),
+    'ONSA13NE':  (57.40,  11.92),
+    'ONSA13SW':  (57.40,  11.92),
+
+    # Wettzell (49.15, 12.88)
+    'WETTZELL':  (49.15,  12.88),
+    'TIGOWTZL':  (49.15,  12.88),
+    'WETTZ13N':  (49.15,  12.88),
+    'WETTZ13S':  (49.15,  12.88),
+
+    # Yebes (40.52, −3.09)
+    'YEBES':     (40.52,  -3.09),
+    'YEBES40M':  (40.52,  -3.09),
+    'RAEGYEB':   (40.52,  -3.09),
+
+    # Matera (40.65, 16.70)
+    'MATERA':    (40.65,  16.70),
+
+    # Sejong (36.52, 127.30)
+    'SEJONG':    (36.52, 127.30),
+
+    # Warkworth (−36.43, 174.66)
+    'WARK12M':   (-36.43, 174.66),
+
+    # Westford (42.61, −71.49)
+    'HAYSTACK':  (42.61,  -71.49),
+    'WESTFORD':  (42.61,  -71.49),
+
+    # Forteleza (−3.88, −38.43)
+    'FORTLEZA':  (-3.88,  -38.43),
 }
+
 RADIUS_KM = 1000.0  # buffer around each station
 LOSS_FN = "LaplaceLoss"
 
@@ -78,27 +119,39 @@ def load_vlbi_meta(cfg):
     """
     Load VLBI metadata for a given year and day of year.
     """
-    year, doy = cfg['year'], cfg['doy']
+    year, doy1, doy2 = cfg['year'], cfg['doy'], cfg['doy'] - 1
     vlbi_path = cfg['data']['VLBI_data_path']
-    month, day = pd.Timestamp(year, 1, 1) + pd.Timedelta(days=doy - 1).strftime('%m %d').split()
-    paths_sx = [p for p in os.listdir(os.path.join(vlbi_path, 'SX')) 
-             if p.startswith(f"{year}{month}{day}-")]
-    paths_vgos = [p for p in os.listdir(os.path.join(vlbi_path, 'VGOS'))
-             if p.startswith(f"{year}{month}{day}-")]
-    paths = set(paths_sx + paths_vgos)
+    month1, day1 = (pd.Timestamp(year, 1, 1) + pd.Timedelta(days=doy1 - 1)).strftime('%m %d').split()
+    month2, day2 = (pd.Timestamp(year, 1, 1) + pd.Timedelta(days=doy2 - 1)).strftime('%m %d').split()
+    paths_sx1 = [os.path.join(vlbi_path, 'SX', str(year), p) for p in os.listdir(os.path.join(vlbi_path, 'SX', str(year))) 
+                if p.startswith(f"{year}{month1}{day1}-")]
+    paths_sx2 = [os.path.join(vlbi_path, 'SX', str(year), p) for p in os.listdir(os.path.join(vlbi_path, 'SX', str(year)))
+                if p.startswith(f"{year}{month2}{day2}-")]
+    paths_vgos1 = [os.path.join(vlbi_path, 'VGOS', str(year), p) for p in os.listdir(os.path.join(vlbi_path, 'VGOS', str(year))) 
+                  if p.startswith(f"{year}{month1}{day1}-")]
+    paths_vgos2 = [os.path.join(vlbi_path, 'VGOS', str(year), p) for p in os.listdir(os.path.join(vlbi_path, 'VGOS', str(year)))
+                  if p.startswith(f"{year}{month2}{day2}-")]
+    paths = set(paths_sx1 + paths_vgos1 + paths_sx2 + paths_vgos2)
 
     all_data = []
     for p in paths:
-        fp = os.path.join(vlbi_path, p, 'summary.md')
+        fp = os.path.join(p, 'summary.md')
+        if not os.path.exists(fp):
+            continue
         with open(fp, "r") as f:
             content = f.read()
         vtec_df = parse_markdown_table(content, "## VTEC Time Series")
         all_data.append(vtec_df)
     
     all_data = pd.concat(all_data, ignore_index=True)
+    # Convert 'epoch' to a datetime column assuming 'date' contains the date information
+    all_data['datetime'] = pd.to_datetime(all_data['date'] + ' ' + all_data['epoch'])
+
+    # Extract unique station names and their corresponding first and last datetime
+    station_epochs = all_data.groupby('station')['datetime'].agg(['min', 'max']).reset_index()
+    station_epochs.rename(columns={'min': 'first_datetime', 'max': 'last_datetime'}, inplace=True)
     
-    
-    return vlbi_meta
+    return station_epochs
 
 def load_data(csv_file, doy):
     df = pd.read_csv(csv_file)
@@ -126,92 +179,129 @@ def prepare_inputs(sa_data, device, sh_encoder):
                      dim=1)
 
 
-def calculate_metrics_old(config, results):
-    # Global
-    rmse = round(np.sqrt(np.mean((results['model_prediction'] - results['vtec'])**2)), 2)
-    mae = round(np.mean(np.abs(results['model_prediction'] - results['vtec'])), 2)
-    out_dir = os.path.join(config['output_dir'], 'SA_plots')
-    os.makedirs(out_dir, exist_ok=True)
-    metrics_file = os.path.join(out_dir, 'metrics.txt')
-    with open(metrics_file, 'w') as f:
-        f.write(f"GLOBAL RMSE: {rmse}\nGLOBAL MAE: {mae}\n")
+def calculate_metrics(config, results, vlbi_meta):
+    """
+    Compute global and per-station metrics, applying:
+    1) A global time filter (union of all VLBI windows) before global metrics.
+    2) Per-station spatio-temporal filter for station metrics.
+    Writes all metrics into 'metrics.txt' under SA_plots/.
+    Returns a dictionary of keys needed by plot_results().
+    """
 
-    # Per-station
-    stats = []
-    for station, (slat, slon) in STATION_COORDS.items():
-        dists = haversine(slat, slon,
-                          results['lat'].values,
-                          results['lon'].values)
-        subset = results[dists <= RADIUS_KM]
-        if not subset.empty:
-            r_s = round(np.sqrt(np.mean((subset['model_prediction'] - subset['vtec'])**2)), 2)
-            m_s = round(np.mean(np.abs(subset['model_prediction'] - subset['vtec'])), 2)
-            n = len(subset)
-        else:
-            r_s, m_s, n = None, None, 0
-        stats.append({'station': station, 'RMSE': r_s, 'MAE': m_s, 'count': n})
-    pd.DataFrame(stats).to_csv(os.path.join(out_dir, 'station_metrics.csv'), index=False)
-    return {'RMSE': rmse, 'MAE': mae}
+    # ----------------------------------------------------------------------
+    # 1) GLOBAL TIME FILTER: find union of all VLBI windows
+    if vlbi_meta.empty:
+        # No VLBI data available: global metrics must be "N/A"
+        global_start, global_end = None, None
+        results_global = pd.DataFrame(columns=results.columns)
+    else:
+        global_start = vlbi_meta['first_datetime'].min()
+        global_end = vlbi_meta['last_datetime'].max()
+        # Filter altimetry rows to only times within [global_start, global_end]
+        mask_global = (results['time'] >= global_start) & (results['time'] <= global_end)
+        results_global = results.loc[mask_global].copy()
+        plot_altimetry_map(config, results_global)
 
-def calculate_metrics(config, results):
-    # 1) Compute raw residuals
-    results['residuals_raw'] = results['model_prediction'] - results['vtec']
+    # ----------------------------------------------------------------------
+    # 2) GLOBAL METRICS (RAW and GLOBAL-BIAS-CORRECTED) on results_global
 
-    # 2) Compute global bias
-    bias_global = np.mean(results['residuals_raw'])
+    if results_global.empty:
+        # If no overlapping altimetry, mark all global metrics as None
+        rmse_raw = mae_raw = std_raw = corr_raw = None
+        bias_global = None
+        rmse_bcg = mae_bcg = std_bcg = corr_bcg = None
+    else:
+        # 2a) Raw residuals for global set
+        results_global['residuals_raw'] = results_global['model_prediction'] - results_global['vtec']
+        rmse_raw = round(np.sqrt(np.mean(results_global['residuals_raw']**2)), 2)
+        mae_raw = round(np.mean(np.abs(results_global['residuals_raw'])), 2)
+        std_raw = round(np.std(results_global['residuals_raw']), 2)
+        corr_raw = round(np.corrcoef(results_global['model_prediction'], results_global['vtec'])[0, 1], 3)
 
-    # 3) Compute global‐bias‐corrected residuals
-    results['residuals_bc_global'] = results['residuals_raw'] - bias_global
+        # 2b) Compute global bias, then bias-corrected residuals
+        bias_global = np.mean(results_global['residuals_raw'])
+        results_global['residuals_bc_global'] = results_global['residuals_raw'] - bias_global
+        rmse_bcg = round(np.sqrt(np.mean(results_global['residuals_bc_global']**2)), 2)
+        mae_bcg = round(np.mean(np.abs(results_global['residuals_bc_global'])), 2)
+        std_bcg = round(np.std(results_global['residuals_bc_global']), 2)
+        corr_bcg = round(np.corrcoef(
+            results_global['model_prediction'] - bias_global,
+            results_global['vtec']
+        )[0, 1], 3)
 
-    # 4) GLOBAL RAW METRICS
-    rmse_raw = round(np.sqrt(np.mean(results['residuals_raw']**2)), 2)
-    mae_raw  = round(np.mean(np.abs(results['residuals_raw'])), 2)
-    std_raw  = round(np.std(results['residuals_raw']), 2)
-    corr_raw = round(np.corrcoef(results['model_prediction'], results['vtec'])[0, 1], 3)
-
-    # 5) GLOBAL-BIAS-CORRECTED METRICS
-    rmse_bcg = round(np.sqrt(np.mean(results['residuals_bc_global']**2)), 2)
-    mae_bcg  = round(np.mean(np.abs(results['residuals_bc_global'])), 2)
-    std_bcg  = round(np.std(results['residuals_bc_global']), 2)
-    # Correlation between (prediction − bias_global) and true VTEC
-    corr_bcg = round(np.corrcoef(results['model_prediction'] - bias_global, results['vtec'])[0, 1], 3)
-
-    # 6) PER-STATION METRICS
+    # ----------------------------------------------------------------------
+    # 3) PER-STATION METRICS
     station_stats = []
     for station, (slat, slon) in STATION_COORDS.items():
+        # 3a) Get this station's own VLBI window
+        row = vlbi_meta[vlbi_meta['station'] == station]
+        if row.empty:
+            # No VLBI record for this station on that day
+            station_stats.append({
+                'station':      station,
+                'count':        0,
+                'RMSE_raw':     None,
+                'MAE_raw':      None,
+                'RMSE_globCor': None,
+                'MAE_globCor':  None,
+                'RMSE_locCor':  None,
+                'MAE_locCor':   None
+            })
+            continue
+
+        start_s = row['first_datetime'].iloc[0]
+        end_s = row['last_datetime'].iloc[0]
+
+        # 3b) Spatial mask: within RADIUS_KM of this station
         dists = haversine(
             slat, slon,
             results['lat'].values,
             results['lon'].values
         )
-        subset = results[dists <= RADIUS_KM]
+        mask_space = (dists <= RADIUS_KM)
 
-        if not subset.empty:
-            # 6a) Raw‐only at station
-            rmse_raw_s = round(np.sqrt(np.mean(subset['residuals_raw']**2)), 2)
-            mae_raw_s  = round(np.mean(np.abs(subset['residuals_raw'])), 2)
+        # 3c) Temporal mask: only times within [start_s, end_s]
+        mask_time_s = (results['time'] >= start_s) & (results['time'] <= end_s)
 
-            # 6b) Global‐bias‐corrected at station
+        # 3d) Intersection: only altimetry points near station _and_ during its VLBI window
+        subset = results.loc[mask_space & mask_time_s].copy()
+
+        if subset.empty:
+            # No overlapping altimetry points for this station
+            station_stats.append({
+                'station':      station,
+                'count':        0,
+                'RMSE_raw':     None,
+                'MAE_raw':      None,
+                'RMSE_globCor': None,
+                'MAE_globCor':  None,
+                'RMSE_locCor':  None,
+                'MAE_locCor':   None
+            })
+            continue
+
+        # 3e) Compute raw station metrics on subset
+        subset['residuals_raw'] = subset['model_prediction'] - subset['vtec']
+        rmse_raw_s = round(np.sqrt(np.mean(subset['residuals_raw']**2)), 2)
+        mae_raw_s = round(np.mean(np.abs(subset['residuals_raw'])), 2)
+
+        # 3f) Compute global-bias-corrected station metrics
+        if bias_global is not None:
+            subset['residuals_bc_global'] = subset['residuals_raw'] - bias_global
             rmse_gs = round(np.sqrt(np.mean(subset['residuals_bc_global']**2)), 2)
-            mae_gs  = round(np.mean(np.abs(subset['residuals_bc_global'])),   2)
-
-            # 6c) Local bias for this station
-            local_bias = np.mean(subset['residuals_raw'])
-            # Subtract local bias
-            subset['residuals_bc_local'] = subset['residuals_raw'] - local_bias
-            rmse_ls = round(np.sqrt(np.mean(subset['residuals_bc_local']**2)), 2)
-            mae_ls  = round(np.mean(np.abs(subset['residuals_bc_local'])),      2)
-
-            count_s = len(subset)
+            mae_gs = round(np.mean(np.abs(subset['residuals_bc_global'])), 2)
         else:
-            rmse_raw_s, mae_raw_s = None, None
-            rmse_gs, mae_gs     = None, None
-            rmse_ls, mae_ls     = None, None
-            count_s             = 0
+            rmse_gs = mae_gs = None
+
+        # 3g) Compute station's own local bias and local-bias-corrected metrics
+        local_bias = np.mean(subset['residuals_raw'])
+        subset['residuals_bc_local'] = subset['residuals_raw'] - local_bias
+        rmse_ls = round(np.sqrt(np.mean(subset['residuals_bc_local']**2)), 2)
+        mae_ls = round(np.mean(np.abs(subset['residuals_bc_local'])), 2)
 
         station_stats.append({
             'station':      station,
-            'count':        count_s,
+            'count':        len(subset),
             'RMSE_raw':     rmse_raw_s,
             'MAE_raw':      mae_raw_s,
             'RMSE_globCor': rmse_gs,
@@ -220,31 +310,41 @@ def calculate_metrics(config, results):
             'MAE_locCor':   mae_ls
         })
 
-    # 7) WRITE EVERYTHING INTO metrics.txt
+    # ----------------------------------------------------------------------
+    # 4) WRITE EVERYTHING INTO metrics.txt
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
     os.makedirs(out_dir, exist_ok=True)
     metrics_file = os.path.join(out_dir, 'metrics.txt')
 
     with open(metrics_file, 'w') as f:
-        # Global bias
-        f.write(f"GLOBAL BIAS: {round(bias_global, 2)}\n\n")
+        # Global bias (if any)
+        if bias_global is None:
+            f.write("GLOBAL BIAS: N/A (no overlapping VLBI vs altimetry)\n\n")
+        else:
+            f.write(f"GLOBAL BIAS: {round(bias_global, 2)}\n\n")
 
         # Raw global metrics
         f.write("RAW GLOBAL METRICS:\n")
-        f.write(f"  RMSE:        {rmse_raw}\n")
-        f.write(f"  MAE:         {mae_raw}\n")
-        f.write(f"  STD:         {std_raw}\n")
-        f.write(f"  Correlation: {corr_raw}\n\n")
+        if rmse_raw is None:
+            f.write("  RMSE: N/A\n  MAE: N/A\n  STD: N/A\n  Correlation: N/A\n\n")
+        else:
+            f.write(f"  RMSE:        {rmse_raw}\n")
+            f.write(f"  MAE:         {mae_raw}\n")
+            f.write(f"  STD:         {std_raw}\n")
+            f.write(f"  Correlation: {corr_raw}\n\n")
 
         # Global-bias-corrected global metrics
         f.write("GLOBAL-BIAS-CORRECTED GLOBAL METRICS:\n")
-        f.write(f"  RMSE:        {rmse_bcg}\n")
-        f.write(f"  MAE:         {mae_bcg}\n")
-        f.write(f"  STD:         {std_bcg}\n")
-        f.write(f"  Correlation: {corr_bcg}\n\n")
+        if rmse_bcg is None:
+            f.write("  RMSE: N/A\n  MAE: N/A\n  STD: N/A\n  Correlation: N/A\n\n")
+        else:
+            f.write(f"  RMSE:        {rmse_bcg}\n")
+            f.write(f"  MAE:         {mae_bcg}\n")
+            f.write(f"  STD:         {std_bcg}\n")
+            f.write(f"  Correlation: {corr_bcg}\n\n")
 
         # Per-station header
-        f.write(f"PER-STATION METRICS (within {RADIUS_KM:.0f} km):\n")
+        f.write(f"PER-STATION METRICS (within {RADIUS_KM:.0f} km of station, during station VLBI window):\n")
         f.write("  {:<12s} {:>6s} {:>10s} {:>10s} {:>12s} {:>12s} {:>12s} {:>12s}\n"
                 .format("Station", "Count",
                         "RMSE_raw", "MAE_raw",
@@ -264,14 +364,68 @@ def calculate_metrics(config, results):
                 str(s['MAE_locCor'])  if s['MAE_locCor']  is not None else "   N/A"
             ))
 
-    # 8) Return keys for plotting or further use
+    # ----------------------------------------------------------------------
+    # 5) Return keys for plotting or further use
     return {
-        'BIAS':         round(bias_global, 2),
-        'RMSE_raw':     rmse_raw,  'MAE_raw':  mae_raw,  'STD_raw':  std_raw,  'CORR_raw':  corr_raw,
-        'RMSE_bcg':     rmse_bcg,  'MAE_bcg':  mae_bcg,  'STD_bcg':  std_bcg,  'CORR_bcg':  corr_bcg
+        'BIAS':      (None if bias_global is None else round(bias_global, 2)),
+        'RMSE_raw':  rmse_raw,  'MAE_raw':  mae_raw,  'STD_raw':  std_raw,  'CORR_raw':  corr_raw,
+        'RMSE_bcg':  rmse_bcg,  'MAE_bcg':  mae_bcg,  'STD_bcg':  std_bcg,  'CORR_bcg':  corr_bcg
     }
 
-def plot_results(config, results, metrics):
+def plot_altimetry_map(config, results):
+    # -----------------------------------------------------------------------------
+    # 1. Set up the figure and a Cartopy GeoAxes (PlateCarree equirectangular)
+    # -----------------------------------------------------------------------------
+    fig = plt.figure(figsize=(10, 5))
+    ax  = plt.axes(projection=ccrs.PlateCarree())
+
+    # -----------------------------------------------------------------------------
+    # 2. Draw the basemap (coastlines + optional land/ocean shading)
+    # -----------------------------------------------------------------------------
+    ax.stock_img()  # simple shaded relief + coastlines
+    ax.coastlines(resolution='110m', linewidth=0.5)
+
+    # -----------------------------------------------------------------------------
+    # 3. Draw gridlines (optional)
+    # -----------------------------------------------------------------------------
+    gl = ax.gridlines(draw_labels=True,
+                    linewidth=0.3,
+                    color='gray',
+                    alpha=0.5,
+                    linestyle='--')
+    gl.top_labels    = False
+    gl.right_labels  = False
+
+    # -----------------------------------------------------------------------------
+    # 4. Overlay your scatter plot
+    # -----------------------------------------------------------------------------
+    ax.scatter(
+        results.loc[:,'lon'],
+        results.loc[:,'lat'],
+        s=16,                   # marker size
+        c='red',                # marker color
+        alpha=0.7,              # transparency
+        transform=ccrs.PlateCarree(),
+    )
+
+    # -----------------------------------------------------------------------------
+    # 5. Add title, legend, etc.
+    # -----------------------------------------------------------------------------
+    year = results['time'].dt.year.iloc[0]
+    doy = results['time'].dt.dayofyear.iloc[0]
+    plt.title(f"Jason-3 observation during VLBI session on {year}-{doy:03d}",)
+
+    plt.savefig(os.path.join(config['output_dir'], 'SA_plots', 'altimetry_map.png'),
+                bbox_inches='tight', dpi=300)
+
+def plot_results(config, results, metrics, vlbi_meta):
+    """
+    Plot:
+      1) Predictions vs Ground Truth (raw)
+      2) Raw residual histogram
+      3) Global‐bias‐corrected residual histogram
+    Uses exactly the columns produced by calculate_metrics().
+    """
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
 
     # 1) Predictions vs Ground Truth (raw)
@@ -279,9 +433,10 @@ def plot_results(config, results, metrics):
     plt.scatter(results['model_prediction'], results['vtec'], s=0.1, alpha=0.3)
     mn, mx = results['vtec'].min(), results['vtec'].max()
     plt.plot([mn, mx], [mn, mx], 'r--')
+    text_raw = "N/A" if metrics['RMSE_raw'] is None else f"RMSE: {metrics['RMSE_raw']}\nMAE: {metrics['MAE_raw']}"
     plt.text(
         0.05, 0.95,
-        f"RMSE: {metrics['RMSE_raw']}\nMAE: {metrics['MAE_raw']}",
+        text_raw,
         transform=plt.gca().transAxes, va='top',
         bbox=dict(boxstyle='round', fc='white')
     )
@@ -294,9 +449,10 @@ def plot_results(config, results, metrics):
     plt.figure(figsize=(8, 8))
     residuals_raw = results['model_prediction'] - results['vtec']
     plt.hist(residuals_raw, bins=100, alpha=0.75, edgecolor='black', linewidth=0.5)
+    text_raw_hist = "N/A" if metrics['RMSE_raw'] is None else f"RMSE: {metrics['RMSE_raw']}\nMAE: {metrics['MAE_raw']}"
     plt.text(
         0.05, 0.95,
-        f"RMSE: {metrics['RMSE_raw']}\nMAE: {metrics['MAE_raw']}",
+        text_raw_hist,
         transform=plt.gca().transAxes, va='top',
         bbox=dict(boxstyle='round', fc='white')
     )
@@ -305,36 +461,24 @@ def plot_results(config, results, metrics):
     plt.savefig(os.path.join(out_dir, 'residuals_hist.png'))
     plt.close()
 
-    # 3) Global‐bias‐corrected residual histogram
-    plt.figure(figsize=(8, 8))
-    # Use the global‐bias‐corrected column that calculate_metrics produced
-    plt.hist(results['residuals_bc_global'], bins=100, alpha=0.75, edgecolor='black', linewidth=0.5)
-    plt.text(
-        0.05, 0.95,
-        f"STD: {metrics['STD_bcg']}\nBias: {metrics['BIAS']}",
-        transform=plt.gca().transAxes, va='top',
-        bbox=dict(boxstyle='round', fc='white')
-    )
-    plt.xlabel('Residuals (global‐bias‐corrected)')
-    plt.ylabel('Frequency')
-    plt.savefig(os.path.join(out_dir, 'residuals_bias_corrected_hist.png'))
-    plt.close()
 
 def evaluate_single(config, mode, sw, lw):
     # Update config for this run
     cfg = config.copy()
     cfg['mode'] = mode
-    if sw is not None: cfg['vlbi_sampling_weight'] = sw
-    if lw is not None: cfg['vlbi_loss_weight'] = lw
+    if sw is not None:
+        cfg['vlbi_sampling_weight'] = sw
+    if lw is not None:
+        cfg['vlbi_loss_weight'] = lw
     cfg['loss_fn'] = LOSS_FN
 
-    # Set output directory based on bash logic
+    # Set output directory based on logic
     exp_root = cfg.get('output_dir')
     tag = f"SW{int(sw) if sw else 1}_LW{int(lw) if lw else 1}"
     out_dir = os.path.join(exp_root, f"{mode}_{cfg['year']}_{cfg['doy']:03d}_{tag}")
     cfg['output_dir'] = out_dir
 
-    # Skip existing
+    # Skip if metrics already exist (unless forced)
     metrics_path = os.path.join(out_dir, 'SA_plots', 'metrics.txt')
     if os.path.exists(metrics_path) and not cfg.get('force', False):
         logging.info(f"Skipping {mode} {tag}, metrics exists")
@@ -343,40 +487,49 @@ def evaluate_single(config, mode, sw, lw):
     logging.info(f"Evaluating {mode} with {tag}")
     t0 = time.time()
 
+    # 1) Load VLBI metadata for this day
     vlbi_meta = load_vlbi_meta(cfg)
 
-    # Load and filter data
-    csv_path = cfg['data']['GNSS_data_path']
+    # 2) Load and filter altimetry/GNSS data
+    csv_path = os.path.join(cfg['data']['GNSS_data_path'], f"sa_dataset.csv")
     if 'cluster' in csv_path:
+        # Replace with cluster‐specific path if needed
         csv_path = '/cluster/work/igp_psr/arrueegg/sa_dataset.csv'
     sa_data = load_data(csv_path, cfg['doy'])
 
-    # Prepare encoder and inputs
+    # 3) Prepare model inputs
     sh_enc = None
     if cfg['preprocessing'].get('SH_encoding'):
         sh_enc = SphericalHarmonics(cfg['preprocessing']['SH_degree']).to(cfg['device'])
     inputs = prepare_inputs(sa_data, cfg['device'], sh_enc)
 
-    # Ensemble inference
+    # 4) Ensemble inference
     preds = []
-    for fn in os.listdir(os.path.join(out_dir, 'model')):
-        m = get_model(cfg).to(cfg['device'])
-        state = torch.load(os.path.join(out_dir, 'model', fn), map_location=cfg['device'])
-        m.load_state_dict(state['model_state_dict'])
-        m.eval()
-        with torch.no_grad(): preds.append(m(inputs).cpu().numpy())
+    model_dir = os.path.join(out_dir, 'model')
+    if os.path.isdir(model_dir):
+        for fn in os.listdir(model_dir):
+            m = get_model(cfg).to(cfg['device'])
+            state = torch.load(os.path.join(model_dir, fn), map_location=cfg['device'])
+            m.load_state_dict(state['model_state_dict'])
+            m.eval()
+            with torch.no_grad():
+                preds.append(m(inputs).cpu().numpy())
+    if not preds:
+        logging.warning(f"No model files found in {model_dir}; skipping inference.")
+        return
     ensemble = np.mean(preds, axis=0)
 
-    # Save results and metrics
+    # 5) Save results DataFrame
     res = sa_data.copy()
-    res['model_prediction'] = ensemble[:,0]
+    res['model_prediction'] = ensemble[:, 0]
     os.makedirs(os.path.join(out_dir, 'SA_plots'), exist_ok=True)
     res.to_csv(os.path.join(out_dir, 'SA_plots', 'results.csv'), index=False)
 
-    metrics = calculate_metrics(cfg, res)
-    plot_results(cfg, res, metrics)
-    logging.info(f"Completed {mode} in {time.time()-t0:.1f}s")
+    # 6) Compute metrics (with time filters) and plot
+    metrics = calculate_metrics(cfg, res, vlbi_meta)
+    plot_results(cfg, res, metrics, vlbi_meta)
 
+    logging.info(f"Completed {mode} in {time.time() - t0:.1f}s")
 
 def main():
     parser = argparse.ArgumentParser()
