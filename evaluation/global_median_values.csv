@@ -1,0 +1,6 @@
+Method,global_RMSE,global_MAE
+GNSS,4.77,3.67
+Fusion LW,4.8,3.65
+Fusion SW,4.82,3.69
+DTEC LW,5.21,3.82
+DTEC SW,5.21,3.8
