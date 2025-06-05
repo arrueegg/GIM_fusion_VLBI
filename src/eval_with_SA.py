@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import re
+from io import StringIO
 import warnings
 
 from utils.locationencoder.pe import SphericalHarmonics
@@ -18,12 +20,22 @@ warnings.filterwarnings("ignore")
 
 # Station definitions for per-station metrics
 STATION_COORDS = {
-    'Kokee': (22.14, -159.64),
+    'Kokee': (22.13, -159.66),
+    'Hobart': (-42.80, 147.44),
+    'Ishioka': (36.21, 140.22),
+    'Santa Maria': (36.98, -25.16),
+    'Onsala': (57.40, 11.92),
+    'Wettzell': (49.15, 12.88),
+    'Yebes': (40.52, -3.09),
+    'Matera': (40.65, 16.70),
+    'Sejong': (36.52, 127.30),
+    'Warkworth': (-36.43, 174.66),
+    'Westford': (42.61, -71.49),
+    'Forteleza': (-3.88, -38.43),
     # add more stations here…
 }
 RADIUS_KM = 1000.0  # buffer around each station
 LOSS_FN = "LaplaceLoss"
-
 
 def haversine(lat1, lon1, lat2, lon2):
     """
@@ -36,12 +48,63 @@ def haversine(lat1, lon1, lat2, lon2):
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
+def parse_markdown_table(text: str, section_header: str) -> pd.DataFrame:
+    """
+    Given a section header (e.g. "## VTEC Time Series"), extracts the markdown table
+    that follows (until the next header "##" or end-of-file) and returns it as a DataFrame.
+    """
+    pattern = re.escape(section_header) + r"(.*?)(\n##|\Z)"
+    match = re.search(pattern, text, re.DOTALL)
+    if not match:
+        return pd.DataFrame()
+    table_text = match.group(1).strip()
+    if not table_text:
+        return pd.DataFrame()
+    # Split into lines and remove any lines that are table separators
+    lines = table_text.splitlines()
+    data_lines = [line for line in lines if not re.match(r"^\s*\|[-:\s|]+\|$", line)]
+    cleaned = "\n".join([line.strip().strip("|") for line in data_lines if line.strip()])
+    if not cleaned:
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(StringIO(cleaned), sep=r"\s*\|\s*", engine="python")
+    except Exception as e:
+        print(f"Error parsing table for section '{section_header}': {e}")
+        return pd.DataFrame()
+    df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+    return df
+
+def load_vlbi_meta(cfg):
+    """
+    Load VLBI metadata for a given year and day of year.
+    """
+    year, doy = cfg['year'], cfg['doy']
+    vlbi_path = cfg['data']['VLBI_data_path']
+    month, day = pd.Timestamp(year, 1, 1) + pd.Timedelta(days=doy - 1).strftime('%m %d').split()
+    paths_sx = [p for p in os.listdir(os.path.join(vlbi_path, 'SX')) 
+             if p.startswith(f"{year}{month}{day}-")]
+    paths_vgos = [p for p in os.listdir(os.path.join(vlbi_path, 'VGOS'))
+             if p.startswith(f"{year}{month}{day}-")]
+    paths = set(paths_sx + paths_vgos)
+
+    all_data = []
+    for p in paths:
+        fp = os.path.join(vlbi_path, p, 'summary.md')
+        with open(fp, "r") as f:
+            content = f.read()
+        vtec_df = parse_markdown_table(content, "## VTEC Time Series")
+        all_data.append(vtec_df)
+    
+    all_data = pd.concat(all_data, ignore_index=True)
+    
+    
+    return vlbi_meta
 
 def load_data(csv_file, doy):
     df = pd.read_csv(csv_file)
     df['time'] = pd.to_datetime(df['time'])
-    return df[df['time'].dt.dayofyear == doy]
-
+    df = df[df['time'].dt.dayofyear == doy]
+    return df
 
 def prepare_inputs(sa_data, device, sh_encoder):
     lat = torch.tensor(sa_data['sm_lat'].values, dtype=torch.float32, device=device)
@@ -242,20 +305,20 @@ def plot_results(config, results, metrics):
     plt.savefig(os.path.join(out_dir, 'residuals_hist.png'))
     plt.close()
 
-    # 3) Bias-corrected residual histogram with outlined bars
+    # 3) Global‐bias‐corrected residual histogram
     plt.figure(figsize=(8, 8))
-    plt.hist(results['residuals_bias_corrected'], bins=100, alpha=0.75, edgecolor='black', linewidth=0.5)
+    # Use the global‐bias‐corrected column that calculate_metrics produced
+    plt.hist(results['residuals_bc_global'], bins=100, alpha=0.75, edgecolor='black', linewidth=0.5)
     plt.text(
         0.05, 0.95,
-        f"STD: {metrics['STD_bc']}\nBias: {metrics['BIAS']}",
+        f"STD: {metrics['STD_bcg']}\nBias: {metrics['BIAS']}",
         transform=plt.gca().transAxes, va='top',
         bbox=dict(boxstyle='round', fc='white')
     )
-    plt.xlabel('Residuals (bias-corrected)')
+    plt.xlabel('Residuals (global‐bias‐corrected)')
     plt.ylabel('Frequency')
     plt.savefig(os.path.join(out_dir, 'residuals_bias_corrected_hist.png'))
     plt.close()
-
 
 def evaluate_single(config, mode, sw, lw):
     # Update config for this run
@@ -279,6 +342,8 @@ def evaluate_single(config, mode, sw, lw):
 
     logging.info(f"Evaluating {mode} with {tag}")
     t0 = time.time()
+
+    vlbi_meta = load_vlbi_meta(cfg)
 
     # Load and filter data
     csv_path = cfg['data']['GNSS_data_path']
