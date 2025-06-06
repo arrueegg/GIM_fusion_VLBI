@@ -1,0 +1,4 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+Evaluating results…
+Saved station_aggregated_metrics.csv in 'evaluation/'
+Saved global_median_values.csv and station_median_values.csv in 'evaluation/'
