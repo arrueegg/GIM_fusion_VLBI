@@ -310,6 +310,11 @@ def calculate_metrics(config, results, vlbi_meta):
             'MAE_locCor':   mae_ls
         })
 
+        subset.to_csv(
+            os.path.join(config['output_dir'], 'SA_plots', f'station_{station}_results.csv'),
+            index=False
+        )
+
     # ----------------------------------------------------------------------
     # 4) WRITE EVERYTHING INTO metrics.txt
     out_dir = os.path.join(config['output_dir'], 'SA_plots')
