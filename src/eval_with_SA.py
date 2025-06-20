@@ -541,8 +541,6 @@ def main():
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--doy", type=int, required=True)
     parser.add_argument("--config", default="config/config.yaml")
-    parser.add_argument("--force", action="store_true",
-                        help="Re-run even if metrics exist")
     args = parser.parse_args()
 
     # Load YAML config
@@ -551,7 +549,6 @@ def main():
         'year': args.year,
         'doy': args.doy,
         'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-        'force': args.force,
         'output_dir': 'experiments/'
     })
 
