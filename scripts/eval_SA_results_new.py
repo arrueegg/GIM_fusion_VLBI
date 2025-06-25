@@ -4,6 +4,7 @@ import re
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 import warnings
 from io import StringIO
 
@@ -27,6 +28,9 @@ for key in METHOD_MAP.keys():
     else:
         COMBINATIONS.append((key, 1, 1))
 MIN_STATION_COUNT = 50
+
+# Set matplotlib style
+plt.style.use('seaborn-v0_8-whitegrid')
 
 # --- VLBI meta data parsing ---
 
@@ -210,7 +214,8 @@ def collect_metrics(experiments_folder):
     global_list = []
     station_all = {}
 
-    for method in sorted(os.listdir(experiments_folder), key=lambda x: int(re.search(r'_(\d{4}_\d{3})_', x).group(1).replace('_', '')) if re.search(r'_(\d{4}_\d{3})_', x) else float('inf'))[:10]:
+    #for method in sorted(os.listdir(experiments_folder), key=lambda x: int(re.search(r'_(\d{4}_\d{3})_', x).group(1).replace('_', '')) if re.search(r'_(\d{4}_\d{3})_', x) else float('inf'))[:10]:
+    for method in sorted(os.listdir(experiments_folder)):
         sa_folder = os.path.join(experiments_folder, method, 'SA_plots')
         if not os.path.isdir(sa_folder):
             continue
@@ -256,84 +261,145 @@ def collect_metrics(experiments_folder):
 
 def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxplots'):
     os.makedirs(out_dir, exist_ok=True)
-    corrections = [('residuals_raw', 'Raw'), ('residuals_bc_global', 'Global BC'), ('residuals_bc_local', 'Local BC')]
+    corrections = [
+        ('residuals_raw',       'Raw'),
+        ('residuals_bc_global', 'Global BC'),
+        ('residuals_bc_local',  'Local BC')
+    ]
+
     for col, label in corrections:
         if col not in df_global_all.columns:
             continue
+
         # Extract approach, SW number, and LW number from the 'method' column
         df_global_all['approach'] = df_global_all['method'].apply(
             lambda x: 'DTEC' if 'DTEC' in x else ('Fusion' if 'Fusion' in x else ('GNSS' if 'GNSS' in x else 'Unknown'))
         )
         df_global_all['SW'] = df_global_all['method'].str.extract(r'_SW(\d+)', expand=False).astype(int)
-        df_global_all['LW'] = df_global_all['method'].str.extract(r'_LW(\d+)', expand=False).astype(int)        
+        df_global_all['LW'] = df_global_all['method'].str.extract(r'_LW(\d+)', expand=False).astype(int)    
 
-        # Create lists for each combination
         data = [
             df_global_all[
-            (df_global_all['approach'] == approach) &
-            (df_global_all['SW'] == sw) &
-            (df_global_all['LW'] == lw)
+                (df_global_all['approach']==approach) &
+                (df_global_all['SW']==sw) &
+                (df_global_all['LW']==lw)
             ][col].dropna()
             for approach, sw, lw in COMBINATIONS
         ]
-        plt.figure(figsize=(12,6))
-        plt.boxplot(data, labels=METHOD_MAP.values(), showfliers=False)
-        plt.title(f'Global {label} Residuals by Method (Annual)')
-        plt.xlabel('Method')
-        plt.ylabel('Residual')
-        plt.xticks(rotation=45, ha='right')
+
+        fig, ax = plt.subplots(figsize=(12,8), dpi=300)
+
+        # default line widths & colors for medians, whiskers, caps
+        bp = ax.boxplot(
+            data,
+            widths=0.6,
+            labels=METHOD_MAP.values(),
+            notch=False,
+            patch_artist=True,
+            showfliers=False,
+            boxprops     = dict(facecolor='tab:blue', edgecolor='black', linewidth=1),
+            whiskerprops = dict(color='black', linewidth=2),
+            capprops     = dict(color='black', linewidth=2),
+            medianprops  = dict(color='tab:orange', linewidth=3)
+        )
+
+        # now draw your full-width orange median
+        for box, median in zip(bp['boxes'], bp['medians']):
+            verts = box.get_path().vertices
+            x0, x1 = verts[:,0].min(), verts[:,0].max()
+            y       = median.get_ydata()[0]
+            median.set_xdata([x0, x1])
+            median.set_ydata([y,  y])
+            median.set(color='tab:orange', linewidth=3)
+
+        ax.set_title(f'Global {label} Residuals by Method (Annual)', fontsize=30, weight='bold')
+        ax.set_xlabel('Method', fontsize=26)
+        ax.set_ylabel('Residual [TECU]', fontsize=26)
+        plt.xticks(rotation=0, ha='center', fontsize=18)
+        plt.yticks(fontsize=18)
         plt.tight_layout()
+
         fname = f'global_{label.lower().replace(" ","_")}_by_method.png'
-        plt.savefig(os.path.join(out_dir, fname), dpi=300)
+        plt.savefig(os.path.join(out_dir, fname))
         plt.close()
 
 
 def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_boxplots'):
-    """Per-station: boxplots of residuals per method for each correction type, aggregated across all days."""
     corrections = [
-        ('residuals_raw', 'Raw'),
+        ('residuals_raw',       'Raw'),
         ('residuals_bc_global', 'Global BC'),
-        ('residuals_bc_local', 'Local BC')
+        ('residuals_bc_local',  'Local BC')
     ]
 
+    # treat all stations as one combined if requested
     df_station_all['all_stations'] = pd.concat(df_station_all.values(), ignore_index=True)
 
     for st, df in df_station_all.items():
-        # df_station_all now contains a single DataFrame per station (already concatenated)
         out_dir = os.path.join(out_base, st)
         os.makedirs(out_dir, exist_ok=True)
+
         for col, label in corrections:
             if col not in df.columns:
                 continue
 
-            # Extract approach, SW number, and LW number from the 'method' column
+            # extract approach/SW/LW
             df['approach'] = df['method'].apply(
-                lambda x: 'DTEC' if 'DTEC' in x else ('Fusion' if 'Fusion' in x else ('GNSS' if 'GNSS' in x else 'Unknown'))
+                lambda x: 'DTEC'   if 'DTEC' in x
+                             else 'Fusion' if 'Fusion' in x
+                             else 'GNSS'   if 'GNSS' in x
+                             else 'Unknown'
             )
             df['SW'] = df['method'].str.extract(r'_SW(\d+)', expand=False).astype(int)
-            df['LW'] = df['method'].str.extract(r'_LW(\d+)', expand=False).astype(int) 
+            df['LW'] = df['method'].str.extract(r'_LW(\d+)', expand=False).astype(int)
 
-            # Prepare data: one series per method
+            # build one series per method
             data = [
                 df[
-                (df['approach'] == approach) &
-                (df['SW'] == sw) &
-                (df['LW'] == lw)
+                    (df['approach']==approach) &
+                    (df['SW']==sw) &
+                    (df['LW']==lw)
                 ][col].dropna()
                 for approach, sw, lw in COMBINATIONS
             ]
-            plt.figure(figsize=(12,6))
-            plt.boxplot(data, labels=METHOD_MAP.values(), showfliers=False)
-            st = 'All Stations' if st == 'all_stations' else st.capitalize()
-            plt.title(f'{st} {label} Residuals by Method (Annual)')
-            plt.xlabel('Method')
-            plt.ylabel('Residual')
-            plt.xticks(rotation=45, ha='right')
+
+            fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
+
+            # draw the boxes
+            bp = ax.boxplot(
+                data,
+                widths=0.6,
+                labels=METHOD_MAP.values(),
+                notch=False,
+                patch_artist=True,
+                showfliers=False,
+                boxprops     = dict(facecolor='tab:blue', edgecolor='black', linewidth=1),
+                whiskerprops = dict(color='black', linewidth=2),
+                capprops     = dict(color='black', linewidth=2),
+                medianprops  = dict(color='tab:orange', linewidth=3)
+            )
+
+            # stretch each median to the box edges
+            for box, median in zip(bp['boxes'], bp['medians']):
+                verts = box.get_path().vertices
+                x0, x1 = verts[:,0].min(), verts[:,0].max()
+                y       = median.get_ydata()[0]
+                median.set_xdata([x0, x1])
+                median.set_ydata([y,  y])
+                median.set(color='tab:orange', linewidth=3)
+
+            # labels & titles
+            station_name = 'All Stations' if st=='all_stations' else st.capitalize()
+            ax.set_title(f'{station_name} {label} Residuals by Method (Annual)',
+                         fontsize=30, weight='bold')
+            ax.set_xlabel('Method', fontsize=26)
+            ax.set_ylabel('Residual [TECU]', fontsize=26)
+            ax.tick_params(axis='x', labelsize=18, rotation=0)
+            ax.tick_params(axis='y', labelsize=18)
+
             plt.tight_layout()
             fname = f'{st}_{label.lower().replace(" ","_")}_by_method.png'
-            plt.savefig(os.path.join(out_dir, fname), dpi=300)
+            plt.savefig(os.path.join(out_dir, fname))
             plt.close()
-
 
 
 def compute_annual_station_metrics(df_station_all):
@@ -433,7 +499,8 @@ def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizat
         plt.savefig(os.path.join(out_dir, fname), dpi=300)
         plt.close()
 
-    
+
+
 def evaluate(df_metrics, df_global_all, df_station_all):
     """Run full evaluation: annual global and station boxplots, plus aggregated visuals."""
     plot_global_annual_box(df_global_all)
@@ -446,7 +513,7 @@ def evaluate(df_metrics, df_global_all, df_station_all):
 def main():
     experiments_folder = '/scratch2/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
     df_metrics, df_global_all, df_station_all = collect_metrics(experiments_folder)
-    print(f"Loaded metrics for {len(df_metrics)} days")
+    print(f"Loaded metrics for {int(len(df_metrics)/5)} days")
     evaluate(df_metrics, df_global_all, df_station_all)
     print("Evaluation completed and saved to 'evaluation/' directory.")
 
