@@ -13,12 +13,19 @@ warnings.filterwarnings("ignore")
 # Define the expected methods and pretty names
 METHOD_MAP = {
     'GNSS': 'GNSS',
-    'Fusion_1000_1': 'Fusion LW',
-    'Fusion_1_1000': 'Fusion SW',
-    'DTEC_100_1': 'DTEC LW',
-    'DTEC_1_100': 'DTEC SW'
+    'Fusion_1000_1': 'Fusion SW',
+    'Fusion_1_1000': 'Fusion LW',
+    'DTEC_100_1': 'DTEC SW',
+    'DTEC_1_100': 'DTEC LW'
 }
-PRETTY_METHODS = ['GNSS', 'Fusion LW', 'Fusion SW', 'DTEC LW', 'DTEC SW']
+COMBINATIONS = []
+for key in METHOD_MAP.keys():
+    parts = key.split('_')
+    if len(parts) == 3:
+        approach, sw, lw = parts
+        COMBINATIONS.append((approach, int(sw), int(lw)))
+    else:
+        COMBINATIONS.append((key, 1, 1))
 MIN_STATION_COUNT = 50
 
 # --- VLBI meta data parsing ---
@@ -242,6 +249,7 @@ def collect_metrics(experiments_folder):
     df_metrics = pd.DataFrame(metrics_list)
     df_global_all = pd.concat(global_list, ignore_index=True) if global_list else pd.DataFrame()
     df_station_all = {st: pd.concat(lst, ignore_index=True) for st, lst in station_all.items()}
+    df_metrics.to_csv('evaluation/SA_metrics_summary.csv', index=False)
     return df_metrics, df_global_all, df_station_all
 
 # --- Plotting & Evaluation Functions ---
@@ -257,16 +265,7 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
             lambda x: 'DTEC' if 'DTEC' in x else ('Fusion' if 'Fusion' in x else ('GNSS' if 'GNSS' in x else 'Unknown'))
         )
         df_global_all['SW'] = df_global_all['method'].str.extract(r'_SW(\d+)', expand=False).astype(int)
-        df_global_all['LW'] = df_global_all['method'].str.extract(r'_LW(\d+)', expand=False).astype(int)
-        # Generate all combinations of approach, SW, and LW
-        combinations = []
-        for key in METHOD_MAP.keys():
-            parts = key.split('_')
-            if len(parts) == 3:
-                approach, sw, lw = parts
-                combinations.append((approach, int(sw), int(lw)))
-            else:
-                combinations.append((key, 1, 1))
+        df_global_all['LW'] = df_global_all['method'].str.extract(r'_LW(\d+)', expand=False).astype(int)        
 
         # Create lists for each combination
         data = [
@@ -275,10 +274,10 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
             (df_global_all['SW'] == sw) &
             (df_global_all['LW'] == lw)
             ][col].dropna()
-            for approach, sw, lw in combinations
+            for approach, sw, lw in COMBINATIONS
         ]
         plt.figure(figsize=(12,6))
-        plt.boxplot(data, labels=PRETTY_METHODS, showfliers=False)
+        plt.boxplot(data, labels=METHOD_MAP.values(), showfliers=False)
         plt.title(f'Global {label} Residuals by Method (Annual)')
         plt.xlabel('Method')
         plt.ylabel('Residual')
@@ -290,18 +289,43 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
 
 
 def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_boxplots'):
-    corrections = [('residuals_raw', 'Raw'), ('residuals_bc_global', 'Global BC'), ('residuals_bc_local', 'Local BC')]
-    for st, frames in df_station_all.items():
-        df = pd.concat(frames, ignore_index=True)
+    """Per-station: boxplots of residuals per method for each correction type, aggregated across all days."""
+    corrections = [
+        ('residuals_raw', 'Raw'),
+        ('residuals_bc_global', 'Global BC'),
+        ('residuals_bc_local', 'Local BC')
+    ]
+
+    df_station_all['all_stations'] = pd.concat(df_station_all.values(), ignore_index=True)
+
+    for st, df in df_station_all.items():
+        # df_station_all now contains a single DataFrame per station (already concatenated)
         out_dir = os.path.join(out_base, st)
         os.makedirs(out_dir, exist_ok=True)
         for col, label in corrections:
             if col not in df.columns:
                 continue
-            data = [df[df['method'] == m][col].dropna() for m in PRETTY_METHODS]
+
+            # Extract approach, SW number, and LW number from the 'method' column
+            df['approach'] = df['method'].apply(
+                lambda x: 'DTEC' if 'DTEC' in x else ('Fusion' if 'Fusion' in x else ('GNSS' if 'GNSS' in x else 'Unknown'))
+            )
+            df['SW'] = df['method'].str.extract(r'_SW(\d+)', expand=False).astype(int)
+            df['LW'] = df['method'].str.extract(r'_LW(\d+)', expand=False).astype(int) 
+
+            # Prepare data: one series per method
+            data = [
+                df[
+                (df['approach'] == approach) &
+                (df['SW'] == sw) &
+                (df['LW'] == lw)
+                ][col].dropna()
+                for approach, sw, lw in COMBINATIONS
+            ]
             plt.figure(figsize=(12,6))
-            plt.boxplot(data, labels=PRETTY_METHODS, showfliers=False)
-            plt.title(f'{st.capitalize()} {label} Residuals by Method (Annual)')
+            plt.boxplot(data, labels=METHOD_MAP.values(), showfliers=False)
+            st = 'All Stations' if st == 'all_stations' else st.capitalize()
+            plt.title(f'{st} {label} Residuals by Method (Annual)')
             plt.xlabel('Method')
             plt.ylabel('Residual')
             plt.xticks(rotation=45, ha='right')
@@ -311,19 +335,31 @@ def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_
             plt.close()
 
 
+
 def compute_annual_station_metrics(df_station_all):
     records = []
-    for st, frames in df_station_all.items():
-        df = pd.concat(frames, ignore_index=True)
+    for st, df in df_station_all.items():
         for col, corr in [('residuals_raw', 'raw'),
                           ('residuals_bc_global', 'global_bc'),
                           ('residuals_bc_local', 'local_bc')]:
             if col in df.columns:
                 arr = df[col].dropna().to_numpy()
-                records.append({'station': st, 'correction': corr,
-                                'RMSE': np.sqrt((arr**2).mean()),
-                                'MAE':  np.mean(np.abs(arr)), 'count': len(arr)})
-    return pd.DataFrame(records)
+                for approach, sw, lw in COMBINATIONS:
+                    arr_combination = df[
+                        (df['approach'] == approach) &
+                        (df['SW'] == sw) &
+                        (df['LW'] == lw)
+                    ][col].dropna().to_numpy()
+                    records.append({'station': st, 'correction': corr, 'approach': approach,
+                                    'SW': sw, 'LW': lw,
+                                    'RMSE': np.sqrt((arr_combination**2).mean()),
+                                    'MAE':  np.mean(np.abs(arr_combination)), 
+                                    'mean': np.mean(arr_combination),
+                                    'median': np.median(arr_combination),
+                                    'count': len(arr_combination)})
+    df_yearly_metrics = pd.DataFrame(records)
+    df_yearly_metrics.to_csv('evaluation/annual_station_metrics.csv', index=False)
+    return df_yearly_metrics
 
 
 def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualizations'):
@@ -336,7 +372,7 @@ def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualiza
     plt.figure(figsize=(12,6))
     for i, corr in enumerate(corrs):
         vals = df_yearly_metrics[df_yearly_metrics['correction']==corr]
-        vals = vals.set_index('station').reindex(stations)['RMSE']
+        vals = vals.drop_duplicates(subset='station').set_index('station').reindex(stations)['RMSE']
         plt.bar(x + (i-1)*width, vals, width, label=corr)
     plt.xticks(x, stations, rotation=45, ha='right')
     plt.ylabel('RMSE')
@@ -349,7 +385,7 @@ def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualiza
     plt.figure(figsize=(12,6))
     for i, corr in enumerate(corrs):
         vals = df_yearly_metrics[df_yearly_metrics['correction']==corr]
-        vals = vals.set_index('station').reindex(stations)['MAE']
+        vals = vals.drop_duplicates(subset='station').set_index('station').reindex(stations)['MAE']
         plt.bar(x + (i-1)*width, vals, width, label=corr)
     plt.xticks(x, stations, rotation=45, ha='right')
     plt.ylabel('MAE')
@@ -362,16 +398,40 @@ def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualiza
 
 def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizations'):
     os.makedirs(out_dir, exist_ok=True)
-    pivot = df_yearly_metrics.pivot(index='station', columns='correction', values='RMSE')
-    plt.figure(figsize=(8,8))
-    im = plt.imshow(pivot, aspect='auto', cmap='coolwarm')
-    plt.colorbar(im, label='RMSE')
-    plt.xticks(np.arange(len(pivot.columns)), pivot.columns, rotation=45, ha='right')
-    plt.yticks(np.arange(len(pivot.index)), pivot.index)
-    plt.title('Heatmap of Annual RMSE by Station & Correction')
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, 'annual_rmse_heatmap.png'), dpi=300)
-    plt.close()
+
+    for corr, group in df_yearly_metrics.groupby('correction'):
+        # 1) Reconstruct the exact method key from approach, SW, LW:
+        group = group.copy()
+        group['method_key'] = group.apply(
+            lambda row: f"{row['approach']}_{row['SW']}_{row['LW']}" 
+            if row['approach'] != 'GNSS' else 'GNSS', axis=1
+        )
+
+        # 2) Pivot on station × method_key, taking RMSE
+        pivot = group.pivot(
+            index='station',
+            columns='method_key',
+            values='RMSE'
+        )
+        # 3) Reorder to your METHOD_MAP order, and rename to the pretty labels
+        pivot = pivot.reindex(columns=METHOD_MAP.keys())
+        pivot.columns = [METHOD_MAP[m] for m in pivot.columns]
+
+        # 4) Plot
+        plt.figure(figsize=(8, 8))
+        im = plt.imshow(pivot, aspect='auto', cmap='coolwarm')
+        plt.colorbar(im, label='RMSE')
+        plt.xticks(np.arange(len(pivot.columns)),
+                   pivot.columns,
+                   rotation=45,
+                   ha='right')
+        plt.yticks(np.arange(len(pivot.index)),
+                   pivot.index)
+        plt.title(f'Heatmap of Annual RMSE by Station & Approach\n(Correction: {corr})')
+        plt.tight_layout()
+        fname = f'annual_rmse_heatmap_{corr}.png'
+        plt.savefig(os.path.join(out_dir, fname), dpi=300)
+        plt.close()
 
     
 def evaluate(df_metrics, df_global_all, df_station_all):
@@ -379,7 +439,6 @@ def evaluate(df_metrics, df_global_all, df_station_all):
     plot_global_annual_box(df_global_all)
     plot_station_annual_box(df_station_all)
     df_yearly_metrics = compute_annual_station_metrics(df_station_all)
-    df_yearly_metrics.to_csv('evaluation/annual_station_metrics.csv', index=False)
     plot_annual_barplots(df_yearly_metrics)
     plot_annual_heatmap(df_yearly_metrics)
 
@@ -389,6 +448,7 @@ def main():
     df_metrics, df_global_all, df_station_all = collect_metrics(experiments_folder)
     print(f"Loaded metrics for {len(df_metrics)} days")
     evaluate(df_metrics, df_global_all, df_station_all)
+    print("Evaluation completed and saved to 'evaluation/' directory.")
 
 if __name__ == "__main__":
     main()
