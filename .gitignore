@@ -5,6 +5,7 @@
 launch.json
 env/
 wandb/
+**/archive/
 
 # Ignore logs and temp files
 *.log

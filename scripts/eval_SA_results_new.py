@@ -1,576 +1,394 @@
 import os
-import yaml
+import glob
+import re
 import pandas as pd
 import numpy as np
-import re
 import matplotlib.pyplot as plt
 import warnings
+from io import StringIO
+
 warnings.filterwarnings("ignore")
 
-def _is_number(s):
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
+# --- Constants & Settings ---
+# Define the expected methods and pretty names
+METHOD_MAP = {
+    'GNSS': 'GNSS',
+    'Fusion_1000_1': 'Fusion LW',
+    'Fusion_1_1000': 'Fusion SW',
+    'DTEC_100_1': 'DTEC LW',
+    'DTEC_1_100': 'DTEC SW'
+}
+PRETTY_METHODS = ['GNSS', 'Fusion LW', 'Fusion SW', 'DTEC LW', 'DTEC SW']
+MIN_STATION_COUNT = 50
 
-def read_SA_metrics(folder, file_name):
-    file_path = os.path.join(folder, file_name)
-    with open(file_path, 'r') as f:
-        lines = [ln.rstrip() for ln in f]
+# --- VLBI meta data parsing ---
 
+def parse_markdown_table(text: str, section_header: str) -> pd.DataFrame:
+    pattern = re.escape(section_header) + r"(.*?)(\n##|\Z)"
+    match = re.search(pattern, text, re.DOTALL)
+    if not match:
+        return pd.DataFrame()
+    table_text = match.group(1).strip()
+    # strip table separators and read as CSV
+    lines = [l for l in table_text.splitlines()
+             if not re.match(r"^\s*\|[-:\s|]+\|$", l)]
+    cleaned = "\n".join([l.strip().strip("|") for l in lines if l.strip()])
+    df = pd.read_csv(StringIO(cleaned), sep=r"\s*\|\s*", engine="python")
+    df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
+    return df
+
+def load_vlbi_meta(vlbi_root: str, year: int, doy: int) -> pd.DataFrame:
+    """
+    Scan all VLBI sessions on that day, parse their summary.md → VTEC Time Series tables,
+    and return a DataFrame with columns ['station','first_datetime','last_datetime'].
+    """
+    # build list of all SX/VGOS summary.md paths for doy and doy-1
+    def doy_paths(subdir, year, doy):
+        m = (pd.Timestamp(year,1,1) + pd.Timedelta(days=doy-1)).strftime("%Y%m%d")
+        folder = os.path.join(vlbi_root, subdir, str(year))
+        return [os.path.join(folder, p, "summary.md")
+                for p in os.listdir(folder) if p.startswith(m+"-")]
+
+    md_paths = set(doy_paths("SX", year, doy) +
+                   doy_paths("VGOS", year, doy) +
+                   doy_paths("SX", year, doy-1) +
+                   doy_paths("VGOS", year, doy-1))
+
+    all_dfs = []
+    for fp in md_paths:
+        if not os.path.exists(fp): continue
+        raw = open(fp).read()
+        vtec = parse_markdown_table(raw, "## VTEC Time Series")
+        if not vtec.empty:
+            vtec['datetime'] = pd.to_datetime(vtec['date'] + ' ' + vtec['epoch'])
+            all_dfs.append(vtec)
+
+    if not all_dfs:
+        return pd.DataFrame(columns=['station','first_datetime','last_datetime'])
+
+    combined = pd.concat(all_dfs, ignore_index=True)
+    # min/max per station
+    return (combined
+            .groupby('station')['datetime']
+            .agg(['min','max'])
+            .reset_index()
+            .rename(columns={'min':'first_datetime','max':'last_datetime'}))
+
+
+# --- Data I/O & Parsing ---
+def read_SA_metrics(folder, include_raw=False):
+    """
+    Compute daily metrics and optionally return raw data.
+
+    Parameters
+    ----------
+    folder : str
+        Path to SA_plots folder containing 'results.csv' and station CSVs.
+    include_raw : bool
+        If True, returns raw DataFrames for global and stations.
+
+    Returns
+    -------
+    metrics : dict
+        Daily global and per-station statistics.
+    station_list : list
+        Sorted station names.
+    df_global : pandas.DataFrame, optional
+        Raw global observations (only if include_raw=True).
+    df_stations : dict of pandas.DataFrame, optional
+        Raw station observations per station.
+    """
+    # ── Load VLBI meta data ───────────────────────────
+    # Extract year and day of year from folder name
+    match = re.search(r'_(\d{4})_(\d{3})_', folder)
+    year = int(match.group(1))
+    doy = int(match.group(2))
+    # Load VLBI meta data for the given day
+    vlbi_meta = load_vlbi_meta('/scratch2/arrueegg/WP1/VLBIono/Results/', year, doy)
+
+    # ─── Global data ───
+
+    # ── load global CSV ─────────────────────────────
+    global_path = os.path.join(folder, 'results.csv')
+    df_global = pd.read_csv(global_path, parse_dates=['time'])
+
+    # ── global time‐filter ──────────────────────────
+    if vlbi_meta.empty:
+        # no overlap → empty for metrics
+        df_global = pd.DataFrame(columns=df_global.columns)
+        global_start = global_end = None
+    else:
+        global_start = vlbi_meta['first_datetime'].min()
+        global_end   = vlbi_meta['last_datetime'].max()
+        mask = (df_global['time'] >= global_start) & (df_global['time'] <= global_end)
+        df_global = df_global.loc[mask].copy()
+
+    # Raw residuals
+    df_global['residuals_raw'] = df_global['model_prediction'] - df_global['vtec']
+
+    # Estimate global bias (mean raw residual)
+    b_global = df_global['residuals_raw'].mean()
+    df_global['pred_bc_global']      = df_global['model_prediction'] - b_global
+    df_global['residuals_bc_global'] = df_global['pred_bc_global'] - df_global['vtec']
+
+    # Global metrics
     metrics = {
-        'global_rmse_raw': None,
-        'global_mae_raw':  None,
-        'global_std_raw':  None,
-        'global_corr_raw': None,
-        'global_rmse_bcg': None,
-        'global_mae_bcg':  None,
-        'global_std_bcg':  None,
-        'global_corr_bcg': None,
+        # raw
+        'global_bias_raw':  b_global,
+        'global_rmse_raw':  np.sqrt((df_global['residuals_raw']**2).mean()),
+        'global_mae_raw':   df_global['residuals_raw'].abs().mean(),
+        'global_std_raw':   df_global['residuals_raw'].std(),
+        'global_corr_raw':  df_global['model_prediction'].corr(df_global['vtec']),
+
+        # bias-corrected (global)
+        'global_rmse_bc_global':  np.sqrt((df_global['residuals_bc_global']**2).mean()),
+        'global_mae_bc_global':   df_global['residuals_bc_global'].abs().mean(),
+        'global_std_bc_global':   df_global['residuals_bc_global'].std(),
+        'global_corr_bc_global':  df_global['pred_bc_global'].corr(df_global['vtec']),
     }
+
+    # ─── Station data ───
     station_data = {}
+    df_stations = {}
+    for path in glob.glob(os.path.join(folder, 'station_*_results.csv')):
+        st_match = re.search(r'station_(.+?)_results\.csv$', path)
+        if not st_match:
+            continue
+        st = st_match.group(1).lower()
+        df_st = pd.read_csv(path, parse_dates=['time'])
+        if 'residuals_raw' not in df_st.columns:
+            df_st['residuals_raw'] = df_st['model_prediction'] - df_st['vtec']
+        df_stations[st] = df_st.copy()
 
-    raw_idx = bc_idx = persta_idx = None
-    for i, ln in enumerate(lines):
-        if ln.strip().startswith("RAW GLOBAL METRICS"):
-            raw_idx = i
-        elif ln.strip().startswith("GLOBAL-BIAS-CORRECTED GLOBAL METRICS"):
-            bc_idx = i
-        elif ln.strip().startswith("PER-STATION METRICS"):
-            persta_idx = i
+        d = {'count': len(df_st)}
+        # Raw
+        raw = df_st['residuals_raw']
+        d['rmse_raw'] = np.sqrt((raw**2).mean())
+        d['mae_raw']  = raw.abs().mean()
+        # Global bias-corrected
+        if 'residuals_bc_global' in df_st:
+            gb = df_st['residuals_bc_global']
+            d['rmse_bc_global'] = np.sqrt((gb**2).mean())
+            d['mae_bc_global']  = gb.abs().mean()
+        # Local bias-corrected
+        if 'residuals_bc_local' in df_st:
+            lb = df_st['residuals_bc_local']
+            d['rmse_bc_local'] = np.sqrt((lb**2).mean())
+            d['mae_bc_local']  = lb.abs().mean()
+        station_data[st] = d
 
-    if raw_idx is not None:
-        for offset in range(1, 5):
-            line = lines[raw_idx + offset].strip()
-            if line.startswith("RMSE:"):
-                metrics['global_rmse_raw'] = float(line.split(":",1)[1].strip())
-            elif line.startswith("MAE:"):
-                metrics['global_mae_raw'] = float(line.split(":",1)[1].strip())
-            elif line.startswith("STD:"):
-                metrics['global_std_raw'] = float(line.split(":",1)[1].strip())
-            elif line.startswith("Correlation:"):
-                metrics['global_corr_raw'] = float(line.split(":",1)[1].strip())
+    station_list = sorted(station_data.keys())
+    metrics['station_data'] = station_data
+    metrics['station_list'] = station_list
 
-    if bc_idx is not None:
-        for offset in range(1, 5):
-            line = lines[bc_idx + offset].strip()
-            if line.startswith("RMSE:"):
-                metrics['global_rmse_bcg'] = float(line.split(":",1)[1].strip())
-            elif line.startswith("MAE:"):
-                metrics['global_mae_bcg'] = float(line.split(":",1)[1].strip())
-            elif line.startswith("STD:"):
-                metrics['global_std_bcg'] = float(line.split(":",1)[1].strip())
-            elif line.startswith("Correlation:"):
-                metrics['global_corr_bcg'] = float(line.split(":",1)[1].strip())
+    if include_raw:
+        return metrics, station_list, df_global, df_stations
+    return metrics, station_list
 
-    if persta_idx is not None:
-        header_line = lines[persta_idx + 1]
-        cols = header_line.strip().split()
-        for line in lines[persta_idx + 2:]:
-            if not line.strip():
-                break
-            tokens = line.strip().split()
-            if len(tokens) < len(cols):
-                continue
-            st_name = tokens[0]
-            vals    = tokens[1:]
-            try:
-                d = {
-                    'count': int(vals[0]),
-                    'rmse_raw': float(vals[1]), 'mae_raw': float(vals[2]),
-                    'rmse_globCor': float(vals[3]), 'mae_globCor': float(vals[4]),
-                    'rmse_locCor': float(vals[5]), 'mae_locCor': float(vals[6]),
-                }
-            except ValueError:
-                d = {
-                    'count': int(vals[0]) if vals[0].isdigit() else None,
-                    'rmse_raw': float(vals[1]) if _is_number(vals[1]) else None,
-                    'mae_raw': float(vals[2]) if _is_number(vals[2]) else None,
-                    'rmse_globCor': float(vals[3]) if _is_number(vals[3]) else None,
-                    'mae_globCor': float(vals[4]) if _is_number(vals[4]) else None,
-                    'rmse_locCor': float(vals[5]) if _is_number(vals[5]) else None,
-                    'mae_locCor': float(vals[6]) if _is_number(vals[6]) else None,
-                }
-            station_data[st_name.lower()] = d
 
-    result = metrics.copy()
-    result['station_list'] = sorted(station_data.keys())
-    result['station_data'] = station_data
-    return result, sorted(station_data.keys())
+def collect_metrics(experiments_folder):
+    """
+    Loop through experiment folders (methods), compute metrics and aggregate raw data across all days.
 
-def read_config_file(folder, file_name):
-    file_path = os.path.join(folder, file_name)
-    with open(file_path, 'r') as file:
-        return yaml.safe_load(file)
+    Returns
+    -------
+    df_metrics : pandas.DataFrame
+        Aggregated metrics per method.
+    df_global_all : pandas.DataFrame
+        Concatenated global raw observations across all methods.
+    df_station_all : dict of pandas.DataFrame
+        Concatenated station raw observations per station across methods.
+    """
+    metrics_list = []
+    global_list = []
+    station_all = {}
 
-def read_experiment(experiment_folder, experiment_name):
-    config_path  = os.path.join(experiment_folder, experiment_name, 'config.yaml')
-    metrics_path = os.path.join(experiment_folder, experiment_name, 'SA_plots', 'metrics.txt')
+    for method in sorted(os.listdir(experiments_folder), key=lambda x: int(re.search(r'_(\d{4}_\d{3})_', x).group(1).replace('_', '')) if re.search(r'_(\d{4}_\d{3})_', x) else float('inf'))[:10]:
+        sa_folder = os.path.join(experiments_folder, method, 'SA_plots')
+        if not os.path.isdir(sa_folder):
+            continue
+        global_csv = os.path.join(sa_folder, 'results.csv')
+        if not os.path.isfile(global_csv):
+            continue
+        # Read metrics and raw data
+        metrics, stations, df_g, dfs = read_SA_metrics(sa_folder, include_raw=True)
+        # Per-method metrics summary
+        rec = {'method': method,
+               'global_bias': metrics['global_bias_raw'],
+               'global_RMSE': metrics['global_rmse_raw'],
+               'global_MAE':  metrics['global_mae_raw']}
+        for st in stations:
+            st_data = metrics['station_data'][st]
+            rec.update({
+                f'{st}_N':             st_data['count'],
+                f'{st}_RMSE':          st_data['rmse_raw'],
+                f'{st}_MAE':           st_data['mae_raw'],
+                f'{st}_RMSE_bc_global': st_data.get('rmse_bc_global', np.nan),
+                f'{st}_MAE_bc_global':  st_data.get('mae_bc_global', np.nan),
+                f'{st}_RMSE_bc_local':  st_data.get('rmse_bc_local', np.nan),
+                f'{st}_MAE_bc_local':   st_data.get('mae_bc_local', np.nan)
+            })
+        metrics_list.append(rec)
+        # Tag and collect raw global data
+        df_g = df_g.copy()
+        df_g['method'] = method
+        global_list.append(df_g)
+        # Tag and collect raw station data
+        for st, df_st in dfs.items():
+            dfc = df_st.copy()
+            dfc['method'] = method
+            station_all.setdefault(st, []).append(dfc)
 
-    cfg = read_config_file(experiment_folder + '/', os.path.join(experiment_name, 'config.yaml'))
-    flat = {}
-    def _flatten_dict(d, prefix=''):
-        for k, v in d.items():
-            if isinstance(v, dict):
-                _flatten_dict(v, prefix=f"{prefix}{k}_")
+    df_metrics = pd.DataFrame(metrics_list)
+    df_global_all = pd.concat(global_list, ignore_index=True) if global_list else pd.DataFrame()
+    df_station_all = {st: pd.concat(lst, ignore_index=True) for st, lst in station_all.items()}
+    return df_metrics, df_global_all, df_station_all
+
+# --- Plotting & Evaluation Functions ---
+
+def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxplots'):
+    os.makedirs(out_dir, exist_ok=True)
+    corrections = [('residuals_raw', 'Raw'), ('residuals_bc_global', 'Global BC'), ('residuals_bc_local', 'Local BC')]
+    for col, label in corrections:
+        if col not in df_global_all.columns:
+            continue
+        # Extract approach, SW number, and LW number from the 'method' column
+        df_global_all['approach'] = df_global_all['method'].apply(
+            lambda x: 'DTEC' if 'DTEC' in x else ('Fusion' if 'Fusion' in x else ('GNSS' if 'GNSS' in x else 'Unknown'))
+        )
+        df_global_all['SW'] = df_global_all['method'].str.extract(r'_SW(\d+)', expand=False).astype(int)
+        df_global_all['LW'] = df_global_all['method'].str.extract(r'_LW(\d+)', expand=False).astype(int)
+        # Generate all combinations of approach, SW, and LW
+        combinations = []
+        for key in METHOD_MAP.keys():
+            parts = key.split('_')
+            if len(parts) == 3:
+                approach, sw, lw = parts
+                combinations.append((approach, int(sw), int(lw)))
             else:
-                flat[f"{prefix}{k}"] = v
-    _flatten_dict(cfg)
+                combinations.append((key, 1, 1))
 
-    SA_results, station_list = read_SA_metrics(
-        os.path.join(experiment_folder, experiment_name, 'SA_plots'), 'metrics.txt'
-    )
-
-    data = {k: [v] for k, v in flat.items()}
-
-    data['global_RMSE'] = [SA_results.get('global_rmse_raw', None)]
-    data['global_MAE']  = [SA_results.get('global_mae_raw',  None)]
-    data['global_RMSE_globalbias'] = [SA_results.get('global_rmse_bcg', None)]
-    data['global_MAE_globalbias']  = [SA_results.get('global_mae_bcg',  None)]
-
-    for st in station_list:
-        d = SA_results['station_data'][st]
-        data[f"{st}_N"]             = [d['count']]
-        data[f"{st}_RMSE"]          = [d['rmse_raw']]
-        data[f"{st}_MAE"]           = [d['mae_raw']]
-        data[f"{st}_RMSE_bcg"]      = [d['rmse_globCor']]
-        data[f"{st}_MAE_bcg"]       = [d['mae_globCor']]
-        data[f"{st}_RMSE_loc"]      = [d['rmse_locCor']]
-        data[f"{st}_MAE_loc"]       = [d['mae_locCor']]
-
-    return pd.DataFrame(data)
-
-def evaluate(df):
-    station_names = sorted([c[:-5]
-        for c in df.columns if c.endswith('_RMSE') and c not in ['global_RMSE', 'global_RMSE_bcg']
-    ])
-
-    group_columns = ['data_mode', 'training_vlbi_loss_weight', 'training_vlbi_sampling_weight']
-    expected = {
-        ('GNSS', 1, 1),
-        ('Fusion', 1000, 1),
-        ('Fusion', 1, 1000),
-        ('DTEC_Fusion', 100, 1),
-        ('DTEC_Fusion', 1, 100)
-    }
-    name_map = {
-        ('GNSS', 1, 1):       'GNSS',
-        ('Fusion', 1000, 1):  'Fusion LW',
-        ('Fusion', 1, 1000):  'Fusion SW',
-        ('DTEC_Fusion', 100, 1): 'DTEC LW',
-        ('DTEC_Fusion', 1, 100): 'DTEC SW'
-    }
-
-    # Filter to valid DOYs where all expected group-keys are present
-    valid_doys = df.groupby('doy').filter(
-        lambda g: set(map(tuple, g[group_columns].values)) == expected
-    )['doy'].unique()
-    df = df[df['doy'].isin(valid_doys)].copy()
-
-    # Convert global columns to numeric
-    df['global_RMSE'] = pd.to_numeric(df['global_RMSE'], errors='coerce')
-    df['global_MAE']  = pd.to_numeric(df['global_MAE'],  errors='coerce')
-    df['global_RMSE_globalbias'] = pd.to_numeric(df['global_RMSE_globalbias'], errors='coerce')
-    df['global_MAE_globalbias']  = pd.to_numeric(df['global_MAE_globalbias'],  errors='coerce')
-
-    # Group by method keys
-    df_mode = df.groupby(group_columns)
-    group_keys = list(name_map.keys())
-    labels = [name_map[k] for k in group_keys]
-
-    os.makedirs('evaluation', exist_ok=True)
-
-    # ---------- Global Histograms (raw & bias-corrected) ----------
-    for suffix, title_suffix in [('', 'raw'), ('_globalbias', 'global bias-corrected')]:
-        plt.figure(figsize=(14,6))
-        rmse_col = f'global_RMSE{suffix}'
-        mae_col  = f'global_MAE{suffix}'
-        rmse_vals = df[rmse_col].dropna()
-        mae_vals  = df[mae_col].dropna()
-        if len(rmse_vals) == 0 or len(mae_vals) == 0:
-            plt.close()
-            continue
-        bins_rmse = np.linspace(rmse_vals.min(), rmse_vals.max(), 20)
-        bins_mae  = np.linspace(mae_vals.min(),  mae_vals.max(),  20)
-
-        plt.subplot(1,2,1)
-        for key in group_keys:
-            if key not in df_mode.groups:
-                continue
-            grp = df_mode.get_group(key)
-            vals = grp[rmse_col].dropna()
-            if len(vals) > 0:
-                plt.hist(vals, bins=bins_rmse, alpha=0.5, label=name_map[key], edgecolor='black')
-        plt.title(f'Global RMSE ({title_suffix}) by Data Mode')
-        plt.xlabel('RMSE')
-        plt.legend()
-
-        plt.subplot(1,2,2)
-        for key in group_keys:
-            if key not in df_mode.groups:
-                continue
-            grp = df_mode.get_group(key)
-            vals = grp[mae_col].dropna()
-            if len(vals) > 0:
-                plt.hist(vals, bins=bins_mae, alpha=0.5, label=name_map[key], edgecolor='black')
-        plt.title(f'Global MAE ({title_suffix}) by Data Mode')
-        plt.xlabel('MAE')
-        plt.legend()
-
-        plt.tight_layout()
-        plt.savefig(f'evaluation/global_hist_{title_suffix.replace(" ", "_")}.png', dpi=300)
-        plt.close()
-
-    # ---------- Global Boxplots (raw & bias-corrected) ----------
-    for suffix, title_suffix in [('', 'raw'), ('_globalbias', 'global bias-corrected')]:
-        rmse_col = f'global_RMSE{suffix}'
-        mae_col  = f'global_MAE{suffix}'
-        data_rmse = []
-        data_mae  = []
-        for key in group_keys:
-            if key not in df_mode.groups:
-                data_rmse.append([])
-                data_mae.append([])
-                continue
-            grp = df_mode.get_group(key)
-            data_rmse.append(grp[rmse_col].dropna().values)
-            data_mae.append(grp[mae_col].dropna().values)
-        if all(len(x) == 0 for x in data_rmse) or all(len(x) == 0 for x in data_mae):
-            continue
-
+        # Create lists for each combination
+        data = [
+            df_global_all[
+            (df_global_all['approach'] == approach) &
+            (df_global_all['SW'] == sw) &
+            (df_global_all['LW'] == lw)
+            ][col].dropna()
+            for approach, sw, lw in combinations
+        ]
         plt.figure(figsize=(12,6))
-        plt.subplot(1,2,1)
-        plt.boxplot(data_rmse, labels=labels)
-        plt.title(f'Global RMSE ({title_suffix}) by Data Mode')
-
-        plt.subplot(1,2,2)
-        plt.boxplot(data_mae, labels=labels)
-        plt.title(f'Global MAE ({title_suffix}) by Data Mode')
-
+        plt.boxplot(data, labels=PRETTY_METHODS, showfliers=False)
+        plt.title(f'Global {label} Residuals by Method (Annual)')
+        plt.xlabel('Method')
+        plt.ylabel('Residual')
+        plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
-        plt.savefig(f'evaluation/global_box_{title_suffix.replace(" ", "_")}.png', dpi=300)
+        fname = f'global_{label.lower().replace(" ","_")}_by_method.png'
+        plt.savefig(os.path.join(out_dir, fname), dpi=300)
         plt.close()
 
-    # ---------- Per-Station Plots (only include rows where count >= 50) ----------
-    for st in station_names:
-        count_col = f'{st}_N'
-        if count_col not in df.columns:
-            continue
-        mask_valid = df[count_col] >= 50
-        df_st = df[mask_valid]
-        if df_st.empty:
-            continue
-        df_mode_st = df_st.groupby(group_columns)
 
-        for col_suffix, title_suffix in [('', 'raw'), ('_bcg', 'global bias-corrected'), ('_loc', 'local bias-corrected')]:
-            rmse_col = f'{st}_RMSE{col_suffix}'
-            mae_col  = f'{st}_MAE{col_suffix}'
-            if rmse_col not in df_st.columns or mae_col not in df_st.columns:
+def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_boxplots'):
+    corrections = [('residuals_raw', 'Raw'), ('residuals_bc_global', 'Global BC'), ('residuals_bc_local', 'Local BC')]
+    for st, frames in df_station_all.items():
+        df = pd.concat(frames, ignore_index=True)
+        out_dir = os.path.join(out_base, st)
+        os.makedirs(out_dir, exist_ok=True)
+        for col, label in corrections:
+            if col not in df.columns:
                 continue
-
-            rmse_vals = df_st[rmse_col].dropna()
-            mae_vals  = df_st[mae_col].dropna()
-            if len(rmse_vals) == 0 or len(mae_vals) == 0:
-                continue
-
-            bins_st_rmse = np.linspace(rmse_vals.min(), rmse_vals.max(), 20)
-            bins_st_mae  = np.linspace(mae_vals.min(),  mae_vals.max(),  20)
-
-            plt.figure(figsize=(14,6))
-            plt.subplot(1,2,1)
-            for key in group_keys:
-                if key not in df_mode_st.groups:
-                    continue
-                grp = df_mode_st.get_group(key)
-                vals = grp[rmse_col].dropna()
-                if len(vals) > 0:
-                    plt.hist(vals, bins=bins_st_rmse, alpha=0.5, label=name_map[key], edgecolor='black')
-            plt.title(f'{st.capitalize()} RMSE ({title_suffix}) by Data Mode')
-            plt.xlabel('RMSE')
-            plt.legend()
-
-            plt.subplot(1,2,2)
-            for key in group_keys:
-                if key not in df_mode_st.groups:
-                    continue
-                grp = df_mode_st.get_group(key)
-                vals = grp[mae_col].dropna()
-                if len(vals) > 0:
-                    plt.hist(vals, bins=bins_st_mae, alpha=0.5, label=name_map[key], edgecolor='black')
-            plt.title(f'{st.capitalize()} MAE ({title_suffix}) by Data Mode')
-            plt.xlabel('MAE')
-            plt.legend()
-
-            plt.tight_layout()
-            fname = f'evaluation/{st}_hist_{title_suffix.replace(" ", "_")}.png'
-            plt.savefig(fname, dpi=300)
-            plt.close()
-
-            # Boxplots
-            data_s_rmse = []
-            data_s_mae  = []
-            for key in group_keys:
-                if key not in df_mode_st.groups:
-                    data_s_rmse.append([])
-                    data_s_mae.append([])
-                    continue
-                grp = df_mode_st.get_group(key)
-                data_s_rmse.append(grp[rmse_col].dropna().values)
-                data_s_mae.append(grp[mae_col].dropna().values)
-            if all(len(x)==0 for x in data_s_rmse) or all(len(x)==0 for x in data_s_mae):
-                continue
-
+            data = [df[df['method'] == m][col].dropna() for m in PRETTY_METHODS]
             plt.figure(figsize=(12,6))
-            plt.subplot(1,2,1)
-            plt.boxplot(data_s_rmse, labels=labels)
-            plt.title(f'{st.capitalize()} RMSE ({title_suffix}) by Data Mode')
-
-            plt.subplot(1,2,2)
-            plt.boxplot(data_s_mae, labels=labels)
-            plt.title(f'{st.capitalize()} MAE ({title_suffix}) by Data Mode')
-
-            plt.tight_layout()
-            fname = f'evaluation/{st}_box_{title_suffix.replace(" ", "_")}.png'
-            plt.savefig(fname, dpi=300)
-            plt.close()
-
-    # ---------- Aggregated (all-DOY) Metrics (per-station) ----------
-    agg_records = []
-    for st in station_names:
-        count_col = f"{st}_N"
-        if count_col not in df.columns:
-            continue
-
-        for key in group_keys:
-            if key not in df_mode.groups:
-                continue
-
-            df_mode_st = df[df[list(group_columns)].apply(tuple, axis=1) == key]
-            if df_mode_st.empty:
-                continue
-
-            df_sm = df_mode_st[df_mode_st[count_col] >= 50]
-            if df_sm.empty:
-                continue
-
-            method_name = name_map[key]
-            for suffix, label_suffix in [("", "raw"), ("_bcg", "glob-bias-corr"), ("_loc", "local-bias-corr")]:
-                rmse_col = f"{st}_RMSE{suffix}"
-                mae_col  = f"{st}_MAE{suffix}"
-                if rmse_col not in df_sm.columns or mae_col not in df_sm.columns:
-                    continue
-
-                sub = df_sm[[count_col, rmse_col, mae_col]].dropna()
-                if sub.empty:
-                    continue
-
-                N_arr    = sub[count_col].to_numpy()
-                rmse_arr = sub[rmse_col].to_numpy()
-                mae_arr  = sub[mae_col].to_numpy()
-
-                weighted_rmse_sq = np.sum(N_arr * (rmse_arr ** 2))
-                total_N = np.sum(N_arr)
-                if total_N > 0:
-                    RMSE_total = np.sqrt(weighted_rmse_sq / total_N)
-                    MAE_total  = np.sum(N_arr * mae_arr) / total_N
-                else:
-                    RMSE_total = np.nan
-                    MAE_total  = np.nan
-
-                agg_records.append({
-                    "station": st,
-                    "method": method_name,
-                    "correction": label_suffix,
-                    "RMSE_allDOY": RMSE_total,
-                    "MAE_allDOY":  MAE_total,
-                    "count": total_N,
-                })
-
-    if agg_records:
-        df_agg = pd.DataFrame(agg_records)
-        df_agg = df_agg.sort_values(["station", "method", "correction"])
-        df_agg.to_csv("evaluation/station_aggregated_metrics.csv", index=False)
-        print("Saved station_aggregated_metrics.csv in 'evaluation/'")
-
-        # ---------- Visualization Section ----------
-        os.makedirs('evaluation/visualizations', exist_ok=True)
-        df_agg = pd.read_csv("evaluation/station_aggregated_metrics.csv")
-
-        # 1. Bar Plot: RMSE/MAE per Method for a Few Selected Stations
-        #selected_stations = ['kokee', 'hobart12', 'ishioka', 'onsala60', 'wark12m',
-        #                      'wettzell', 'matera', 'fortleza', 'sejong', 'kokee12m', 'onsa13ne', 'onsa13sw']
-
-        selected_stations = df_agg['station'].unique()
-        
-        for st in selected_stations:
-            df_st = df_agg[df_agg['station'] == st]
-            methods = df_st['method'].unique()
-            corrections = ['raw', 'glob-bias-corr', 'local-bias-corr']
-
-            x = np.arange(len(methods))
-            width = 0.12  # Narrower width to fit all bars
-            total_bars = len(corrections) * 2  # 2 metrics per correction
-
-            plt.figure(figsize=(12, 6))
-
-            for i, corr in enumerate(corrections):
-                df_corr = df_st[df_st['correction'] == corr]
-
-                rmse_vals = [
-                    df_corr[df_corr['method'] == m]['RMSE_allDOY'].values[0]
-                    if not df_corr[df_corr['method'] == m].empty
-                    else np.nan
-                    for m in methods
-                ]
-                mae_vals = [
-                    df_corr[df_corr['method'] == m]['MAE_allDOY'].values[0]
-                    if not df_corr[df_corr['method'] == m].empty
-                    else np.nan
-                    for m in methods
-                ]
-
-                offset = (i * 2)  # 2 bars per correction
-                plt.bar(x + (offset - total_bars / 2) * width, rmse_vals, width, label=f'RMSE ({corr})', alpha=0.7)
-                plt.bar(x + (offset + 1 - total_bars / 2) * width, mae_vals, width, label=f'MAE ({corr})', alpha=0.7)
-
-
-            plt.xticks(x, methods)
+            plt.boxplot(data, labels=PRETTY_METHODS, showfliers=False)
+            plt.title(f'{st.capitalize()} {label} Residuals by Method (Annual)')
             plt.xlabel('Method')
-            plt.ylabel('Error')
-            plt.title(f'{st.capitalize()}: RMSE and MAE by Method & Correction')
-            plt.legend(loc='upper right', fontsize='small')
-            plt.tight_layout()
-            plt.savefig(f'evaluation/visualizations/{st}_barplot.png', dpi=300)
-            plt.close()
-
-        # 2. Box Plot: Distribution Across All Stations
-        corrections = df_agg['correction'].unique()
-
-        for corr in corrections:
-            df_corr = df_agg[df_agg['correction'] == corr].copy()
-            df_corr['method_corr'] = df_corr['method']  # No need to add correction to label
-
-            plt.figure(figsize=(14, 6))
-
-            # RMSE subplot
-            plt.subplot(1, 2, 1)
-            box_data_rmse = [group['RMSE_allDOY'].values for _, group in df_corr.groupby('method_corr')]
-            labels_rmse = df_corr['method_corr'].unique()
-            plt.boxplot(box_data_rmse, labels=labels_rmse, showfliers=False)
+            plt.ylabel('Residual')
             plt.xticks(rotation=45, ha='right')
-            plt.title(f'RMSE Distribution (Correction: {corr})')
-            plt.ylabel('RMSE')
-
-            # MAE subplot
-            plt.subplot(1, 2, 2)
-            box_data_mae = [group['MAE_allDOY'].values for _, group in df_corr.groupby('method_corr')]
-            labels_mae = df_corr['method_corr'].unique()
-            plt.boxplot(box_data_mae, labels=labels_mae, showfliers=False)
-            plt.xticks(rotation=45, ha='right')
-            plt.title(f'MAE Distribution (Correction: {corr})')
-            plt.ylabel('MAE')
-
-            plt.suptitle(f'Distribution Across All Stations — Correction: {corr}')
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-            plt.savefig(f'evaluation/visualizations/boxplot_all_stations_{corr}.png', dpi=300)
-            plt.close()
-
-        # 3. Heatmap: RMSE per Station vs Method
-        corrections = df_agg['correction'].unique()
-
-        for corr in corrections:
-            df_corr = df_agg[df_agg['correction'] == corr]
-            pivot_rmse = df_corr.pivot(index='station', columns='method', values='RMSE_allDOY').fillna(np.nan)
-
-            plt.figure(figsize=(10, 8))
-            im = plt.imshow(pivot_rmse.values, aspect='auto', interpolation='nearest', cmap='coolwarm')
-            plt.colorbar(im, label='RMSE')
-            plt.xticks(np.arange(len(pivot_rmse.columns)), pivot_rmse.columns, rotation=45, ha='right')
-            plt.yticks(np.arange(len(pivot_rmse.index)), pivot_rmse.index)
-            plt.title('Heatmap of Raw RMSE: Station vs Method')
             plt.tight_layout()
-            plt.savefig(f'evaluation/visualizations/heatmap_rmse_{corr}.png', dpi=300)
+            fname = f'{st}_{label.lower().replace(" ","_")}_by_method.png'
+            plt.savefig(os.path.join(out_dir, fname), dpi=300)
             plt.close()
 
-        # 4. Facet Grid / Small Multiples: One Bar Plot per Station
-        stations_to_plot = ['kokee', 'hobart12', 'ishioka', 'onsala60', 'wark12m',
-                              'wettzell', 'matera', 'fortleza', 'sejong', 'kokee12m', 'onsa13ne', 'onsa13sw']
-        n_plots = len(stations_to_plot)
-        n_cols = 3
-        n_rows = int(np.ceil(n_plots / n_cols))
 
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-        axes = axes.flatten()
+def compute_annual_station_metrics(df_station_all):
+    records = []
+    for st, frames in df_station_all.items():
+        df = pd.concat(frames, ignore_index=True)
+        for col, corr in [('residuals_raw', 'raw'),
+                          ('residuals_bc_global', 'global_bc'),
+                          ('residuals_bc_local', 'local_bc')]:
+            if col in df.columns:
+                arr = df[col].dropna().to_numpy()
+                records.append({'station': st, 'correction': corr,
+                                'RMSE': np.sqrt((arr**2).mean()),
+                                'MAE':  np.mean(np.abs(arr)), 'count': len(arr)})
+    return pd.DataFrame(records)
 
-        for idx, st in enumerate(stations_to_plot):
-            ax = axes[idx]
-            df_st = df_agg[df_agg['station'] == st]
-            methods = df_st['method'].unique()
-            x = np.arange(len(methods))
-            width = 0.25
-            corrections = ['raw', 'glob-bias-corr', 'local-bias-corr']
 
-            for i, corr in enumerate(corrections):
-                df_corr = df_st[df_st['correction'] == corr]
-                rmse_vals = [
-                    df_corr[df_corr['method'] == m]['RMSE_allDOY'].values[0]
-                    if not df_corr[df_corr['method'] == m].empty
-                    else np.nan
-                    for m in methods
-                ]
-                ax.bar(x + i * width - width, rmse_vals, width, label=corr, alpha=0.7)
+def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualizations'):
+    os.makedirs(out_dir, exist_ok=True)
+    stations = df_yearly_metrics['station'].unique()
+    corrs = df_yearly_metrics['correction'].unique()
+    x = np.arange(len(stations))
+    width = 0.25
+    # RMSE
+    plt.figure(figsize=(12,6))
+    for i, corr in enumerate(corrs):
+        vals = df_yearly_metrics[df_yearly_metrics['correction']==corr]
+        vals = vals.set_index('station').reindex(stations)['RMSE']
+        plt.bar(x + (i-1)*width, vals, width, label=corr)
+    plt.xticks(x, stations, rotation=45, ha='right')
+    plt.ylabel('RMSE')
+    plt.title('Annual RMSE by Station & Correction')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'annual_rmse_barplot.png'), dpi=300)
+    plt.close()
+    # MAE
+    plt.figure(figsize=(12,6))
+    for i, corr in enumerate(corrs):
+        vals = df_yearly_metrics[df_yearly_metrics['correction']==corr]
+        vals = vals.set_index('station').reindex(stations)['MAE']
+        plt.bar(x + (i-1)*width, vals, width, label=corr)
+    plt.xticks(x, stations, rotation=45, ha='right')
+    plt.ylabel('MAE')
+    plt.title('Annual MAE by Station & Correction')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'annual_mae_barplot.png'), dpi=300)
+    plt.close()
 
-            ax.set_xticks(x)
-            ax.set_xticklabels(methods, rotation=45, ha='right')
-            ax.set_title(st.capitalize())
-            ax.set_xlabel('Method')
-            ax.set_ylabel('RMSE')
-            ax.legend(fontsize='small')
 
-        for j in range(idx + 1, len(axes)):
-            fig.delaxes(axes[j])
+def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizations'):
+    os.makedirs(out_dir, exist_ok=True)
+    pivot = df_yearly_metrics.pivot(index='station', columns='correction', values='RMSE')
+    plt.figure(figsize=(8,8))
+    im = plt.imshow(pivot, aspect='auto', cmap='coolwarm')
+    plt.colorbar(im, label='RMSE')
+    plt.xticks(np.arange(len(pivot.columns)), pivot.columns, rotation=45, ha='right')
+    plt.yticks(np.arange(len(pivot.index)), pivot.index)
+    plt.title('Heatmap of Annual RMSE by Station & Correction')
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'annual_rmse_heatmap.png'), dpi=300)
+    plt.close()
 
-        plt.tight_layout()
-        plt.savefig('evaluation/visualizations/facet_barplots.png', dpi=300)
-        plt.close()
+    
+def evaluate(df_metrics, df_global_all, df_station_all):
+    """Run full evaluation: annual global and station boxplots, plus aggregated visuals."""
+    plot_global_annual_box(df_global_all)
+    plot_station_annual_box(df_station_all)
+    df_yearly_metrics = compute_annual_station_metrics(df_station_all)
+    df_yearly_metrics.to_csv('evaluation/annual_station_metrics.csv', index=False)
+    plot_annual_barplots(df_yearly_metrics)
+    plot_annual_heatmap(df_yearly_metrics)
 
-    # ---------- Medians (raw, global bias, local bias) ----------
-    median_values = df.groupby(group_columns).median(numeric_only=True)
-    median_values = median_values.reindex(group_keys)
-
-    global_metrics = median_values[[
-        'global_RMSE', 'global_MAE',
-        'global_RMSE_globalbias', 'global_MAE_globalbias'
-    ]].copy()
-
-    station_cols = []
-    for st in station_names:
-        for suffix in ['', '_bcg', '_loc']:
-            station_cols.append(f"{st}_RMSE{suffix}")
-            station_cols.append(f"{st}_MAE{suffix}")
-    station_cols = [c for c in station_cols if c in median_values.columns]
-    station_metrics = median_values[station_cols].copy()
-
-    global_metrics.index  = [name_map[k] for k in global_metrics.index]
-    station_metrics.index = [name_map[k] for k in station_metrics.index]
-
-    global_metrics.to_csv('evaluation/global_median_values.csv', header=True, index_label='Method')
-    station_metrics.to_csv('evaluation/station_median_values.csv', header=True, index_label='Method')
-
-    print("Saved global_median_values.csv and station_median_values.csv in 'evaluation/'")
 
 def main():
-    experiments_folder = '/cluster/work/igp_psr/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
-    df = pd.DataFrame()
-
-    for exp in os.listdir(experiments_folder):
-        metrics_txt = os.path.join(experiments_folder, exp, 'SA_plots', 'metrics.txt')
-        if os.path.exists(metrics_txt):
-            df = pd.concat([df, read_experiment(experiments_folder, exp)], ignore_index=True)
-
-    print("Evaluating results…")
-    evaluate(df)
+    experiments_folder = '/scratch2/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
+    df_metrics, df_global_all, df_station_all = collect_metrics(experiments_folder)
+    print(f"Loaded metrics for {len(df_metrics)} days")
+    evaluate(df_metrics, df_global_all, df_station_all)
 
 if __name__ == "__main__":
     main()
