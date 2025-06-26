@@ -263,9 +263,11 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
     os.makedirs(out_dir, exist_ok=True)
     corrections = [
         ('residuals_raw',       'Raw'),
-        ('residuals_bc_global', 'Global BC'),
-        ('residuals_bc_local',  'Local BC')
+        ('residuals_bc_global', 'Global Bias Corrected'),
+        ('residuals_bc_local',  'Local Bias Corrected')
     ]
+
+    median_values = {}  # Dictionary to store median values
 
     for col, label in corrections:
         if col not in df_global_all.columns:
@@ -304,6 +306,7 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
         )
 
         # now draw your full-width orange median
+        medians = []
         for box, median in zip(bp['boxes'], bp['medians']):
             verts = box.get_path().vertices
             x0, x1 = verts[:,0].min(), verts[:,0].max()
@@ -311,24 +314,35 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
             median.set_xdata([x0, x1])
             median.set_ydata([y,  y])
             median.set(color='tab:orange', linewidth=3)
+            medians.append(y)  # Store the median value
 
-        ax.set_title(f'Global {label} Residuals by Method (Annual)', fontsize=30, weight='bold')
-        ax.set_xlabel('Method', fontsize=26)
+        # Store median values for the current correction
+        median_values[label] = medians
+
+        #ax.set_xlabel('Method', fontsize=26)
         ax.set_ylabel('Residual [TECU]', fontsize=26)
-        plt.xticks(rotation=0, ha='center', fontsize=18)
-        plt.yticks(fontsize=18)
-        plt.tight_layout()
+        plt.xticks(rotation=0, ha='center', fontsize=26)
+        plt.yticks(fontsize=26)
 
-        fname = f'global_{label.lower().replace(" ","_")}_by_method.png'
+        plt.tight_layout()
+        fname = f'global_{label.lower().replace(" ","_")}_by_method_notitle.png'
         plt.savefig(os.path.join(out_dir, fname))
+        ax.set_title(f'Global {label} Residuals', fontsize=30, weight='bold')
+        plt.tight_layout()
+        fname = f'global_{label.lower().replace(" ","_")}_by_method.png'
+        plt.savefig(os.path.join(out_dir, fname), dpi=300)
         plt.close()
+
+    # Save median values to a CSV file
+    median_df = pd.DataFrame(median_values, index=METHOD_MAP.values())
+    median_df.to_csv(os.path.join(out_dir, 'global_median_values.csv'))
 
 
 def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_boxplots'):
     corrections = [
         ('residuals_raw',       'Raw'),
-        ('residuals_bc_global', 'Global BC'),
-        ('residuals_bc_local',  'Local BC')
+        ('residuals_bc_global', 'Global Bias Corrected'),
+        ('residuals_bc_local',  'Local Bias Corrected')
     ]
 
     # treat all stations as one combined if requested
@@ -389,16 +403,18 @@ def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_
 
             # labels & titles
             station_name = 'All Stations' if st=='all_stations' else st.capitalize()
-            ax.set_title(f'{station_name} {label} Residuals by Method (Annual)',
-                         fontsize=30, weight='bold')
-            ax.set_xlabel('Method', fontsize=26)
+            #ax.set_xlabel('Method', fontsize=26)
             ax.set_ylabel('Residual [TECU]', fontsize=26)
-            ax.tick_params(axis='x', labelsize=18, rotation=0)
-            ax.tick_params(axis='y', labelsize=18)
+            ax.tick_params(axis='x', labelsize=26)
+            ax.tick_params(axis='y', labelsize=26)
 
             plt.tight_layout()
-            fname = f'{st}_{label.lower().replace(" ","_")}_by_method.png'
+            fname = f'{st}_{label.lower().replace(" ","_")}_by_method_notitle.png'
             plt.savefig(os.path.join(out_dir, fname))
+            ax.set_title(f'{station_name} {label} Residuals', fontsize=30, weight='bold')
+            plt.tight_layout()
+            fname = f'{st}_{label.lower().replace(" ","_")}_by_method.png'
+            plt.savefig(os.path.join(out_dir, fname), dpi=300)
             plt.close()
 
 
