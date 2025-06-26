@@ -7,27 +7,38 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 from io import StringIO
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
 # --- Constants & Settings ---
 # Define the expected methods and pretty names
+SELECTED_METHODS = [
+    'GNSS_1_1',
+    'Fusion_1_1000',
+    'DTEC_1_100',
+]
+ORIGINAL_METHOD_MAP = {
+    'GNSS_1_1':          'GNSS only',
+    'Fusion_1000_1': 'VLBI VTEC',
+    'Fusion_1_1000': 'VLBI VTEC',
+    'DTEC_100_1':    'VLBI DTEC',
+    'DTEC_1_100':    'VLBI DTEC',
+}
+# now filter to only the ones the user wants
 METHOD_MAP = {
-    'GNSS': 'GNSS',
-    'Fusion_1000_1': 'Fusion SW',
-    'Fusion_1_1000': 'Fusion LW',
-    'DTEC_100_1': 'DTEC SW',
-    'DTEC_1_100': 'DTEC LW'
+    k: ORIGINAL_METHOD_MAP[k]
+    for k in SELECTED_METHODS
+    if k in ORIGINAL_METHOD_MAP
 }
 COMBINATIONS = []
-for key in METHOD_MAP.keys():
+for key in METHOD_MAP:
     parts = key.split('_')
     if len(parts) == 3:
         approach, sw, lw = parts
         COMBINATIONS.append((approach, int(sw), int(lw)))
     else:
         COMBINATIONS.append((key, 1, 1))
-MIN_STATION_COUNT = 50
 
 # Set matplotlib style
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -87,6 +98,19 @@ def load_vlbi_meta(vlbi_root: str, year: int, doy: int) -> pd.DataFrame:
 
 
 # --- Data I/O & Parsing ---
+def extract_key_from_folder(folder_name):
+    """
+    Given a folder like 'Fusion_1_1000_2025_123_xyz',
+    return the method key 'Fusion_1_1000' (or 'GNSS' if it’s a GNSS folder).
+    """
+    for key in ORIGINAL_METHOD_MAP.keys():
+        parts = key.split('_')
+        if len(parts) == 3:
+            approach, SW, LW = parts
+            if folder_name.startswith(approach) and f'_SW{SW}_LW{LW}' in folder_name:
+                return key
+    return None
+
 def read_SA_metrics(folder, include_raw=False):
     """
     Compute daily metrics and optionally return raw data.
@@ -196,7 +220,6 @@ def read_SA_metrics(folder, include_raw=False):
         return metrics, station_list, df_global, df_stations
     return metrics, station_list
 
-
 def collect_metrics(experiments_folder):
     """
     Loop through experiment folders (methods), compute metrics and aggregate raw data across all days.
@@ -214,8 +237,39 @@ def collect_metrics(experiments_folder):
     global_list = []
     station_all = {}
 
-    #for method in sorted(os.listdir(experiments_folder), key=lambda x: int(re.search(r'_(\d{4}_\d{3})_', x).group(1).replace('_', '')) if re.search(r'_(\d{4}_\d{3})_', x) else float('inf'))[:10]:
-    for method in sorted(os.listdir(experiments_folder)):
+    #exp_list = sorted(os.listdir(experiments_folder), key=lambda x: int(re.search(r'_(\d{4}_\d{3})_', x).group(1).replace('_', '')) if re.search(r'_(\d{4}_\d{3})_', x) else float('inf'))[:10]
+    exp_list = sorted(os.listdir(experiments_folder))
+
+    # Filter out any experiment folders whose key isn’t in METHOD_MAP
+    exp_list = [
+        m for m in exp_list
+        if extract_key_from_folder(m) in METHOD_MAP
+    ]
+
+    # Ensure all 5 approaches exist for each day of year (doy)
+    doys = set()
+    for method in exp_list:
+        match = re.search(r'_(\d{4}_\d{3})_', method)
+        if match:
+            doys.add(match.group(1))
+
+    filtered_exp_list = []
+    for doy in doys:
+        methods_for_doy = [method for method in exp_list if f"_{doy}_" in method]
+        # Check if all methods exist and SA_plots/results.csv is present
+        if len(methods_for_doy) == len(METHOD_MAP):
+            valid_methods = []
+            for method in methods_for_doy:
+                sa_folder = os.path.join(experiments_folder, method, 'SA_plots')
+                results_csv = os.path.join(sa_folder, 'results.csv')
+                if os.path.isdir(sa_folder) and os.path.isfile(results_csv):
+                    valid_methods.append(method)
+            if len(valid_methods) == len(METHOD_MAP):
+                filtered_exp_list.extend(valid_methods)
+
+    exp_list = filtered_exp_list
+
+    for method in tqdm(exp_list):
         sa_folder = os.path.join(experiments_folder, method, 'SA_plots')
         if not os.path.isdir(sa_folder):
             continue
@@ -268,6 +322,7 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
     ]
 
     median_values = {}  # Dictionary to store median values
+    observation_counts = {}  # Dictionary to store observation counts
 
     for col, label in corrections:
         if col not in df_global_all.columns:
@@ -307,7 +362,8 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
 
         # now draw your full-width orange median
         medians = []
-        for box, median in zip(bp['boxes'], bp['medians']):
+        counts = []
+        for box, median, d in zip(bp['boxes'], bp['medians'], data):
             verts = box.get_path().vertices
             x0, x1 = verts[:,0].min(), verts[:,0].max()
             y       = median.get_ydata()[0]
@@ -315,9 +371,11 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
             median.set_ydata([y,  y])
             median.set(color='tab:orange', linewidth=3)
             medians.append(y)  # Store the median value
+            counts.append(len(d))  # Store the observation count
 
-        # Store median values for the current correction
+        # Store median values and observation counts for the current correction
         median_values[label] = medians
+        observation_counts[label] = counts
 
         #ax.set_xlabel('Method', fontsize=26)
         ax.set_ylabel('Residual [TECU]', fontsize=26)
@@ -333,10 +391,11 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
         plt.savefig(os.path.join(out_dir, fname), dpi=300)
         plt.close()
 
-    # Save median values to a CSV file
+    # Save median values and observation counts to a CSV file
     median_df = pd.DataFrame(median_values, index=METHOD_MAP.values())
-    median_df.to_csv(os.path.join(out_dir, 'global_median_values.csv'))
-
+    count_df = pd.DataFrame(observation_counts, index=METHOD_MAP.values())
+    combined_df = pd.concat([median_df, count_df.rename(lambda x: f"{x}_count", axis=1)], axis=1)
+    combined_df.to_csv(os.path.join(out_dir, 'global_median_values.csv'))
 
 def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_boxplots'):
     corrections = [
@@ -417,7 +476,6 @@ def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_
             plt.savefig(os.path.join(out_dir, fname), dpi=300)
             plt.close()
 
-
 def compute_annual_station_metrics(df_station_all):
     records = []
     for st, df in df_station_all.items():
@@ -442,7 +500,6 @@ def compute_annual_station_metrics(df_station_all):
     df_yearly_metrics = pd.DataFrame(records)
     df_yearly_metrics.to_csv('evaluation/annual_station_metrics.csv', index=False)
     return df_yearly_metrics
-
 
 def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualizations'):
     os.makedirs(out_dir, exist_ok=True)
@@ -477,7 +534,6 @@ def plot_annual_barplots(df_yearly_metrics, out_dir='evaluation/annual_visualiza
     plt.savefig(os.path.join(out_dir, 'annual_mae_barplot.png'), dpi=300)
     plt.close()
 
-
 def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizations'):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -485,8 +541,7 @@ def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizat
         # 1) Reconstruct the exact method key from approach, SW, LW:
         group = group.copy()
         group['method_key'] = group.apply(
-            lambda row: f"{row['approach']}_{row['SW']}_{row['LW']}" 
-            if row['approach'] != 'GNSS' else 'GNSS', axis=1
+            lambda row: f"{row['approach']}_{row['SW']}_{row['LW']}", axis=1
         )
 
         # 2) Pivot on station × method_key, taking RMSE
@@ -516,21 +571,23 @@ def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizat
         plt.close()
 
 
-
-def evaluate(df_metrics, df_global_all, df_station_all):
-    """Run full evaluation: annual global and station boxplots, plus aggregated visuals."""
-    plot_global_annual_box(df_global_all)
-    plot_station_annual_box(df_station_all)
-    df_yearly_metrics = compute_annual_station_metrics(df_station_all)
-    plot_annual_barplots(df_yearly_metrics)
-    plot_annual_heatmap(df_yearly_metrics)
-
-
 def main():
     experiments_folder = '/scratch2/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
     df_metrics, df_global_all, df_station_all = collect_metrics(experiments_folder)
     print(f"Loaded metrics for {int(len(df_metrics)/5)} days")
-    evaluate(df_metrics, df_global_all, df_station_all)
+    
+    print(f"Creating global evaluation plots...")
+    plot_global_annual_box(df_global_all)
+    print(f"Creating station evaluation plots...")
+    plot_station_annual_box(df_station_all)
+
+    print(f"Computing annual station metrics...")
+    df_yearly_metrics = compute_annual_station_metrics(df_station_all)
+    print(f"Creating annual barplots...")
+    plot_annual_barplots(df_yearly_metrics)
+    print(f"Creating annual heatmaps...")
+    plot_annual_heatmap(df_yearly_metrics)
+
     print("Evaluation completed and saved to 'evaluation/' directory.")
 
 if __name__ == "__main__":
