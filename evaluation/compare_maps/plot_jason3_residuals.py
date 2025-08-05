@@ -2,9 +2,15 @@
 """
 Jason-3 Residuals Plotting Pipeline
 
-This script creates a pipeline to plot residuals of an approach (e.g., GNSS) to Jason-3 observations.
-It processes all Jason-3 altimetry observations in 2023, runs inference on the corresponding day's model,
-and stores predictions, ground truth, and residuals in a 1x1 degree grid.
+This script creates a pipeline to plot bias-corrected residuals of an approach (e.g., GNSS) 
+to Jason-3 observations. It processes all Jason-3 altimetry observations in 2023, runs 
+inference on the corresponding day's model, applies daily bias correction (removes global 
+mean deviation), and stores predictions, ground truth, and bias-corrected residuals in a 1x1 degree grid.
+
+Bias Correction:
+- For each day, calculates the global mean deviation: bias = mean(predictions - observations)
+- Subtracts this daily bias from predictions before computing residuals
+- This removes systematic daily offsets while preserving spatial patterns
 
 Author: GitHub Copilot
 Date: 2025-01-03
@@ -41,7 +47,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class Jason3ResidualPipeline:
-    """Pipeline for processing Jason-3 observations and computing model residuals."""
+    """
+    Pipeline for processing Jason-3 observations and computing bias-corrected model residuals.
+    
+    The pipeline applies daily bias correction by computing the global mean deviation 
+    between model predictions and Jason-3 observations for each day, then subtracting 
+    this bias from residuals before storing them in the 1x1 degree grid.
+    """
     
     def __init__(self, config, approach="GNSS", year=2023):
         """
@@ -257,13 +269,14 @@ class Jason3ResidualPipeline:
         ensemble_pred = np.mean(predictions, axis=0)
         return ensemble_pred
     
-    def update_grid(self, observations, predictions):
+    def update_grid(self, observations, predictions, daily_bias=0.0):
         """
         Update the results grid with new observations and predictions.
         
         Args:
             observations: DataFrame with Jason-3 data
             predictions: Model predictions
+            daily_bias: Daily global bias to correct for (predictions - ground_truth mean)
         """
         # Convert to grid indices
         lat_indices = np.digitize(observations['lat'].values, 
@@ -276,7 +289,9 @@ class Jason3ResidualPipeline:
         lon_indices = np.clip(lon_indices, 0, len(self.lon_bins) - 1)
         
         ground_truth = observations['vtec'].values
-        residuals = predictions - ground_truth
+        # Apply bias correction to residuals
+        bias_corrected_predictions = predictions - daily_bias
+        residuals = bias_corrected_predictions - ground_truth
         
         # Update grid (accumulate values for averaging)
         for i, (lat_idx, lon_idx) in enumerate(zip(lat_indices, lon_indices)):
@@ -284,7 +299,7 @@ class Jason3ResidualPipeline:
             
             if current_count == 0:
                 # First observation in this grid cell
-                self.results_grid['predictions'][lat_idx, lon_idx] = predictions[i]
+                self.results_grid['predictions'][lat_idx, lon_idx] = bias_corrected_predictions[i]
                 self.results_grid['ground_truth'][lat_idx, lon_idx] = ground_truth[i]
                 self.results_grid['residuals'][lat_idx, lon_idx] = residuals[i]
             else:
@@ -292,7 +307,7 @@ class Jason3ResidualPipeline:
                 weight = 1.0 / (current_count + 1)
                 self.results_grid['predictions'][lat_idx, lon_idx] = (
                     self.results_grid['predictions'][lat_idx, lon_idx] * (1 - weight) + 
-                    predictions[i] * weight
+                    bias_corrected_predictions[i] * weight
                 )
                 self.results_grid['ground_truth'][lat_idx, lon_idx] = (
                     self.results_grid['ground_truth'][lat_idx, lon_idx] * (1 - weight) + 
@@ -327,7 +342,8 @@ class Jason3ResidualPipeline:
             'total_observations': len(jason3_data),
             'processed_observations': 0,
             'failed_days': [],
-            'model_not_found_days': []
+            'model_not_found_days': [],
+            'daily_biases': []  # Track daily bias values
         }
         
         logger.info(f"Found observations for {stats['total_days']} days")
@@ -355,8 +371,15 @@ class Jason3ResidualPipeline:
                 # Run inference
                 predictions = self.run_inference(models, inputs)
                 
-                # Update grid
-                self.update_grid(day_data, predictions)
+                # Calculate daily global bias (mean deviation)
+                ground_truth = day_data['vtec'].values
+                daily_bias = np.mean(predictions - ground_truth)
+                
+                logger.debug(f"DOY {doy}: Daily bias = {daily_bias:.3f} TECU")
+                stats['daily_biases'].append(daily_bias)
+                
+                # Update grid with bias correction
+                self.update_grid(day_data, predictions, daily_bias)
                 
                 stats['processed_days'] += 1
                 stats['processed_observations'] += len(day_data)
@@ -419,8 +442,6 @@ class Jason3ResidualPipeline:
         
         # Add map features
         ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
-        ax.add_feature(cfeature.BORDERS, linewidth=0.3)
-        ax.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.5)
         ax.add_feature(cfeature.LAND, color='lightgray', alpha=0.5)
         
         # Plot residuals
@@ -435,7 +456,7 @@ class Jason3ResidualPipeline:
         im = ax.pcolormesh(lon_mesh, lat_mesh, residuals_masked, 
                           transform=ccrs.PlateCarree(),
                           cmap='RdBu_r', shading='nearest',
-                          vmin=border,
+                          vmin=-border,
                           vmax=border)
         
         plt.colorbar(im, ax=ax, orientation='horizontal', 
@@ -580,6 +601,15 @@ def main():
         logger.info(f"  Processed observations: {stats['processed_observations']}")
         logger.info(f"  Days with missing models: {len(stats['model_not_found_days'])}")
         logger.info(f"  Failed days: {len(stats['failed_days'])}")
+        
+        # Print bias correction statistics
+        if stats['daily_biases']:
+            daily_biases = np.array(stats['daily_biases'])
+            logger.info(f"Bias Correction Statistics:")
+            logger.info(f"  Mean daily bias: {np.mean(daily_biases):.3f} TECU")
+            logger.info(f"  Std daily bias: {np.std(daily_biases):.3f} TECU")
+            logger.info(f"  Min daily bias: {np.min(daily_biases):.3f} TECU")
+            logger.info(f"  Max daily bias: {np.max(daily_biases):.3f} TECU")
         
         if stats['processed_observations'] == 0:
             logger.error("No observations were processed. Check model availability and data paths.")
