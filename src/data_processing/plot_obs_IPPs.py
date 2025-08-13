@@ -19,6 +19,8 @@ from spacepy.coordinates import Coords
 from spacepy.time import Ticktock
 import pyproj
 
+np.float_ = np.float64
+
 def read_gnss_data(folder, year, doy):
     """
     Reads the VTEC data file and returns it as a pandas DataFrame,
@@ -637,6 +639,10 @@ def plot_obs_density_map(gnss_data, vlbi_vtec_data, vlbi_dtec_data, year, doy, p
     # Add a legend for stations
     ax.legend(loc='lower left', frameon=True, facecolor='white', edgecolor='gray')
 
+    # --- Make the background transparent ---
+    fig.patch.set_alpha(0.0)
+    ax.patch.set_alpha(0.0)
+
     # --- Save without title ---
     fig.tight_layout(pad=1.5)
     plt.savefig(f"src/data_processing/observation_density_map_{year}_{doy:03d}_notitle.png", bbox_inches='tight', dpi=300)
@@ -653,7 +659,7 @@ def plot_obs_density_map(gnss_data, vlbi_vtec_data, vlbi_dtec_data, year, doy, p
 
 def main():
     # File path to the VTEC data file
-    gnss_data_folder = "/home/space/data/IONO/STEC_DB"
+    gnss_data_folder = "/home/space/data/IONO/STEC_DB_estDCB"
     vlbi_vtec_data_path = "/scratch2/arrueegg/WP1/VLBIono/Results/"
     vlbi_dtec_data_path = "/home/space/data/vlbi/ivsdata/vgosdb/"
 
