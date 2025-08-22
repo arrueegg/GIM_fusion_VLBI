@@ -184,12 +184,15 @@ def parse_ionex(filepath):
         'rms': rms_maps
     }
     return gim_data
+
 def plot_GIM(gim, args):
     vtec_maps = gim['vtec']
     rms_maps = gim['rms']
 
     # Create a meshgrid for plotting
     lon_grid, lat_grid = np.meshgrid(gim['lons'], gim['lats'])
+
+    date = datetime.datetime(*map(int, gim['epochs'][0][:6])).strftime('%Y%m%d')
 
     for epoch in range(len(gim['epochs'])):
 
@@ -225,21 +228,66 @@ def plot_GIM(gim, args):
         fig.colorbar(rms_plot, ax=ax2, label='RMS (TECU)')
 
         plt.tight_layout()
+        os.makedirs(f'evaluation/IGS_GIM/{date}', exist_ok=True)
+        plt.savefig(f'evaluation/IGS_GIM/{date}/GIM_{epoch_datetime.strftime("%Y%m%d_%H%M")}.png')
+        plt.show()
+        plt.close()
+
+def plot_VTEC_only(gim, args):
+    vtec_maps = gim['vtec']
+
+    # Create a meshgrid for plotting
+    lon_grid, lat_grid = np.meshgrid(gim['lons'], gim['lats'])
+
+    date = datetime.datetime(*map(int, gim['epochs'][0][:6])).strftime('%Y%m%d')
+
+    for epoch in range(len(gim['epochs'])):
+
+        vtec = vtec_maps[epoch]
+
+        # Extract and format the date from the tuple
+        epoch_tuple = gim['epochs'][epoch]
+        epoch_datetime = datetime.datetime(*map(int, epoch_tuple[:6]))
+
+        # Plot VTEC only
+        fig, ax = plt.subplots(1, 1, figsize=(12, 6), subplot_kw={'projection': ccrs.PlateCarree()})
+        plt.suptitle('IGS GIM VTEC for ' + epoch_datetime.strftime('%Y-%m-%d %H:%M'), fontweight='bold')
+
+        # VTEC Plot
+        vtec_plot = ax.pcolormesh(lon_grid, lat_grid, vtec, shading='auto', cmap='viridis', vmin=0, vmax=80)
+        ax.coastlines()
+        ax.set_title('VTEC Map')
+        ax.set_xlabel('Longitude')
+        ax.set_ylabel('Latitude')
+        ax.set_aspect('equal') 
+        
+        # Create colorbar
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        fig.colorbar(vtec_plot, cax=cax, label='VTEC (TECU)')
+
+        plt.tight_layout()
+        os.makedirs(f'evaluation/IGS_GIM/{date}', exist_ok=True)
+        plt.savefig(f'evaluation/IGS_GIM/{date}/GIM_VTEC_only_{epoch_datetime.strftime("%Y%m%d_%H%M")}.png', dpi=300, bbox_inches='tight')
         plt.show()
         plt.close()
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--year', type=int, default=2023,help='year of data to process')
-    parser.add_argument('--doy', type=int, default=10, help='day of year of data to process')
-    parser.add_argument('--GIM_path', type=str, default='/home/ggl/project/2022_shumao_IonoSpatialModeling/07_data/GNSS_ionex/', help='Path to the GIM folder')
+    parser.add_argument('--year', type=int, default=2024,help='year of data to process')
+    parser.add_argument('--doy', type=int, default=1, help='day of year of data to process')
+    parser.add_argument('--GIM_path', type=str, default='/home/space/project/2022_shumao_IonoSpatialModeling/07_data/GNSS_ionex/', help='Path to the GIM folder')
+    parser.add_argument('--vtec_only', action='store_true', help='Plot only VTEC without RMS subplot')
     args = parser.parse_args()
 
     # Load GIM
     gim = load_GIM(args)
 
-    # Plot VTEC and RMS
-    plot_GIM(gim, args)
+    # Plot VTEC and RMS or VTEC only based on flag
+    if args.vtec_only:
+        plot_VTEC_only(gim, args)
+    else:
+        plot_GIM(gim, args)
 
 if __name__ == "__main__":
     main()

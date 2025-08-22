@@ -665,7 +665,7 @@ def main():
 
     # Desired date (year and day of year)
     year = 2023
-    doy = 180
+    doy = 12
 
     # Read the data
     vlbi_dtec_data = read_vlbi_dtec_data(vlbi_dtec_data_path, year, doy)
