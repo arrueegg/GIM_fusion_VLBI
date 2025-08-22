@@ -11,6 +11,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import cartopy.crs as ccrs
 import datetime
 import argparse
+from PIL import Image
+import glob
 
 def load_GIM(args):
     # Construct the filename based on DOY and year
@@ -193,6 +195,9 @@ def plot_GIM(gim, args):
     lon_grid, lat_grid = np.meshgrid(gim['lons'], gim['lats'])
 
     date = datetime.datetime(*map(int, gim['epochs'][0][:6])).strftime('%Y%m%d')
+    
+    # List to store image paths for GIF creation
+    image_paths = []
 
     for epoch in range(len(gim['epochs'])):
 
@@ -205,33 +210,53 @@ def plot_GIM(gim, args):
 
         # Plot VTEC and RMS
         fig, axes = plt.subplots(2, 1, figsize=(10, 8), subplot_kw={'projection': ccrs.PlateCarree()})
-        plt.suptitle('IGS GIM for ' + epoch_datetime.strftime('%Y-%m-%d %H:%M'), fontweight='bold')
+        plt.suptitle('IGS GIM for ' + epoch_datetime.strftime('%Y-%m-%d %H:%M'), fontweight='bold', fontsize=16)
 
         # VTEC Plot
         ax1 = axes[0]
-        vtec_plot = ax1.pcolormesh(lon_grid, lat_grid, vtec, shading='auto', cmap='viridis', vmin=0, vmax=80)
-        ax1.coastlines()
-        ax1.set_title('VTEC Map')
-        ax1.set_xlabel('Longitude')
-        ax1.set_ylabel('Latitude')
+        vtec_plot = ax1.pcolormesh(lon_grid, lat_grid, vtec, shading='auto', cmap='gist_heat', vmin=0, vmax=80)
+        ax1.coastlines(color='white')
+        ax1.set_title('VTEC Map', fontsize=14)
+        ax1.set_xlabel('Longitude', fontsize=12)
+        ax1.set_ylabel('Latitude', fontsize=12)
         ax1.set_aspect('equal') 
-        fig.colorbar(vtec_plot, ax=ax1, label='VTEC (TECU)')
+        ax1.set_xticks(np.arange(-180, 181, 60))
+        ax1.set_yticks(np.arange(-90, 91, 30))
+        ax1.tick_params(labelsize=11)
+        ax1.grid(True, alpha=0.3)
+        cbar1 = fig.colorbar(vtec_plot, ax=ax1, label='VTEC (TECU)')
+        cbar1.ax.tick_params(labelsize=11)
+        cbar1.set_label('VTEC (TECU)', fontsize=12)
 
         # RMS Plot
         ax2 = axes[1]
         rms_plot = ax2.pcolormesh(lon_grid, lat_grid, rms, shading='auto', cmap='Blues', vmin=0, vmax=20)
-        ax2.coastlines()
-        ax2.set_title('RMS Map')
-        ax2.set_xlabel('Longitude')
-        ax2.set_ylabel('Latitude')
+        ax2.coastlines(color='black')
+        ax2.set_title('RMS Map', fontsize=14)
+        ax2.set_xlabel('Longitude', fontsize=12)
+        ax2.set_ylabel('Latitude', fontsize=12)
         ax2.set_aspect('equal')
-        fig.colorbar(rms_plot, ax=ax2, label='RMS (TECU)')
+        ax2.set_xticks(np.arange(-180, 181, 60))
+        ax2.set_yticks(np.arange(-90, 91, 30))
+        ax2.tick_params(labelsize=11)
+        ax2.grid(True, alpha=0.3)
+        cbar2 = fig.colorbar(rms_plot, ax=ax2, label='RMS (TECU)')
+        cbar2.ax.tick_params(labelsize=11)
+        cbar2.set_label('RMS (TECU)', fontsize=12)
 
         plt.tight_layout()
         os.makedirs(f'evaluation/IGS_GIM/{date}', exist_ok=True)
-        plt.savefig(f'evaluation/IGS_GIM/{date}/GIM_{epoch_datetime.strftime("%Y%m%d_%H%M")}.png')
+        
+        # Save the image and store path for GIF
+        image_path = f'evaluation/IGS_GIM/{date}/GIM_{epoch_datetime.strftime("%Y%m%d_%H%M")}.png'
+        plt.savefig(image_path)
+        image_paths.append(image_path)
+        
         plt.show()
         plt.close()
+    
+    # Create GIF from all daily images
+    create_gif(image_paths, f'evaluation/IGS_GIM/{date}/GIM_daily_{date}.gif')
 
 def plot_VTEC_only(gim, args):
     vtec_maps = gim['vtec']
@@ -240,6 +265,9 @@ def plot_VTEC_only(gim, args):
     lon_grid, lat_grid = np.meshgrid(gim['lons'], gim['lats'])
 
     date = datetime.datetime(*map(int, gim['epochs'][0][:6])).strftime('%Y%m%d')
+    
+    # List to store image paths for GIF creation
+    image_paths = []
 
     for epoch in range(len(gim['epochs'])):
 
@@ -251,26 +279,70 @@ def plot_VTEC_only(gim, args):
 
         # Plot VTEC only
         fig, ax = plt.subplots(1, 1, figsize=(12, 6), subplot_kw={'projection': ccrs.PlateCarree()})
-        plt.suptitle('IGS GIM VTEC for ' + epoch_datetime.strftime('%Y-%m-%d %H:%M'), fontweight='bold')
 
         # VTEC Plot
-        vtec_plot = ax.pcolormesh(lon_grid, lat_grid, vtec, shading='auto', cmap='viridis', vmin=0, vmax=80)
-        ax.coastlines()
-        ax.set_title('VTEC Map')
-        ax.set_xlabel('Longitude')
-        ax.set_ylabel('Latitude')
+        vtec_plot = ax.pcolormesh(lon_grid, lat_grid, vtec, shading='auto', cmap='gist_heat', vmin=0, vmax=80)
+        ax.coastlines(color='white')
+        ax.set_title('IGS GIM VTEC for ' + epoch_datetime.strftime('%Y-%m-%d %H:%M'), fontweight='bold', fontsize=16)
+        ax.set_xlabel('Longitude', fontsize=14)
+        ax.set_ylabel('Latitude', fontsize=14)
         ax.set_aspect('equal') 
+        ax.set_xticks(np.arange(-180, 181, 60))
+        ax.set_yticks(np.arange(-90, 91, 30))
+        ax.tick_params(labelsize=12)
+        ax.grid(True, alpha=0.3)
         
-        # Create colorbar
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.1)
-        fig.colorbar(vtec_plot, cax=cax, label='VTEC (TECU)')
+        # Create colorbar using the simpler approach
+        cbar = fig.colorbar(vtec_plot, ax=ax, label='VTEC (TECU)', shrink=0.8)
+        cbar.ax.tick_params(labelsize=12)
+        cbar.set_label('VTEC (TECU)', fontsize=14)
 
         plt.tight_layout()
         os.makedirs(f'evaluation/IGS_GIM/{date}', exist_ok=True)
-        plt.savefig(f'evaluation/IGS_GIM/{date}/GIM_VTEC_only_{epoch_datetime.strftime("%Y%m%d_%H%M")}.png', dpi=300, bbox_inches='tight')
+        
+        # Save the image and store path for GIF
+        image_path = f'evaluation/IGS_GIM/{date}/GIM_VTEC_only_{epoch_datetime.strftime("%Y%m%d_%H%M")}.png'
+        plt.savefig(image_path, dpi=300, bbox_inches='tight')
+        image_paths.append(image_path)
+        
         plt.show()
         plt.close()
+    
+    # Create GIF from all daily images
+    create_gif(image_paths, f'evaluation/IGS_GIM/{date}/GIM_VTEC_daily_{date}.gif')
+
+def create_gif(image_paths, output_path, duration=500):
+    """
+    Create a GIF from a list of image paths.
+    
+    Parameters:
+    image_paths (list): List of paths to PNG images
+    output_path (str): Path for the output GIF file
+    duration (int): Duration between frames in milliseconds
+    """
+    if not image_paths:
+        print("No images found to create GIF")
+        return
+    
+    # Load all images
+    images = []
+    for path in image_paths:
+        if os.path.exists(path):
+            img = Image.open(path)
+            images.append(img)
+    
+    if images:
+        # Save as GIF
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0
+        )
+        print(f"GIF created: {output_path}")
+    else:
+        print("No valid images found to create GIF")
 
 def main():
     parser = argparse.ArgumentParser()
