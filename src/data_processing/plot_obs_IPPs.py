@@ -516,7 +516,7 @@ def plot_obs_density_map(gnss_data, vlbi_vtec_data, vlbi_dtec_data, year, doy, p
     ax.set_global() # Sets the extent to show the whole world
 
     # --- Basemap Colors (Richer Blue & Beige Pastels) ---
-    ocean_color = "#92C6EE"
+    ocean_color = "#E7E7E7"
     land_color = "#D1B882"
 
     ax.add_feature(cfeature.OCEAN, facecolor=ocean_color, edgecolor='none')
