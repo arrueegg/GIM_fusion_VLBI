@@ -867,7 +867,7 @@ def get_data_loaders(config):
 
     if config["data"]["mode"] == "GNSS":
         train_dataset, val_dataset, test_dataset = get_GNSS_data(config)
-        test_dataset = FusionDataset(test_dataset, SingleVLBIDataset(config, split="test"))
+        # GNSS-only: no VLBI data needed
 
     elif config["data"]["mode"] == "Fusion":
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_data(config)

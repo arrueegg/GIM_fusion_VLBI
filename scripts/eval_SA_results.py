@@ -576,7 +576,7 @@ def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizat
 def main():
     experiments_folder = '/scratch2/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
     df_metrics, df_global_all, df_station_all = collect_metrics(experiments_folder)
-    print(f"Loaded metrics for {int(len(df_metrics)/5)} days")
+    print(f"Loaded metrics for {int(len(df_metrics)/len(METHOD_MAP))} days ({len(df_metrics)} experiments, {len(METHOD_MAP)} methods)")
     
     print(f"Creating global evaluation plots...")
     plot_global_annual_box(df_global_all)

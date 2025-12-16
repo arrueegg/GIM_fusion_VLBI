@@ -8,7 +8,7 @@ random_seed: 42
 # Data configuration
 data:
   mode: "DTEC_Fusion"    # Fusion or GNSS (only GNSS) or DTEC_Fusion
-  GNSS_data_path: "/home/space/data/IONO/STEC_DB/"
+  GNSS_data_path: "/home/space/data/iono/STEC_DB_estDCB/"
   VLBI_data_path: "/scratch2/arrueegg/WP1/VLBIono/Results/"
   VLBI_raw_data_path: "/home/space/data/vlbi/ivsdata/vgosdb/"
   columns_to_load:  #['station', 'stec', 'vtec', 'sm_lat', 'sm_lon', 'satele', 'satazi', 'sod', 'dcbs', 'dcbr'] # List of columns to load or None (no arg) for all columns
