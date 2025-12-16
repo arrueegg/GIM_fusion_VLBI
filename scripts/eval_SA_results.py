@@ -15,8 +15,8 @@ warnings.filterwarnings("ignore")
 # Define the expected methods and pretty names
 SELECTED_METHODS = [
     'GNSS_1_1',
-    'Fusion_1_1000',
     'DTEC_1_100',
+    'Fusion_1_1000',
 ]
 ORIGINAL_METHOD_MAP = {
     'GNSS_1_1':          'GNSS only',
@@ -381,6 +381,7 @@ def plot_global_annual_box(df_global_all, out_dir='evaluation/global_annual_boxp
         ax.set_ylabel('Residual [TECU]', fontsize=26)
         plt.xticks(rotation=0, ha='center', fontsize=26)
         plt.yticks(fontsize=26)
+        ax.set_ylim(-10, 10)
 
         plt.tight_layout()
         fname = f'global_{label.lower().replace(" ","_")}_by_method_notitle.png'
