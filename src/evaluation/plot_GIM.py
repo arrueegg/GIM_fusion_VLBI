@@ -347,9 +347,9 @@ def create_gif(image_paths, output_path, duration=500):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--year', type=int, default=2024,help='year of data to process')
-    parser.add_argument('--doy', type=int, default=1, help='day of year of data to process')
+    parser.add_argument('--doy', type=int, default=183, help='day of year of data to process')
     parser.add_argument('--GIM_path', type=str, default='/home/space/project/2022_shumao_IonoSpatialModeling/07_data/GNSS_ionex/', help='Path to the GIM folder')
-    parser.add_argument('--vtec_only', action='store_true', help='Plot only VTEC without RMS subplot')
+    parser.add_argument('--vtec_only', action='store_true', default=True, help='Plot only VTEC without RMS subplot')
     args = parser.parse_args()
 
     # Load GIM

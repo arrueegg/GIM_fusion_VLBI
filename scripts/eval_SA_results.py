@@ -466,6 +466,7 @@ def plot_station_annual_box(df_station_all, out_base='evaluation/annual_station_
             ax.set_ylabel('Residual [TECU]', fontsize=26)
             ax.tick_params(axis='x', labelsize=26)
             ax.tick_params(axis='y', labelsize=26)
+            ax.set_ylim(-10, 10)
 
             plt.tight_layout()
             fname = f'{st}_{label.lower().replace(" ","_")}_by_method_notitle.png'
