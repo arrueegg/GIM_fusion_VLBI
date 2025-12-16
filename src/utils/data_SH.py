@@ -236,6 +236,10 @@ class SingleVLBIDataset(Dataset):
         mask = df['doy'] == int(self.doy) 
         df = df[mask]
 
+        # Check if empty after DOY filtering
+        if df.empty:
+            return df
+
         sta_coords = pd.read_json(os.path.join("src", "utils", "station_coords.json"))
         
         df['Latitude'] = df['station'].map(lambda x: sta_coords.get(x, {}).get('Latitude'))
@@ -867,7 +871,7 @@ def get_data_loaders(config):
 
     if config["data"]["mode"] == "GNSS":
         train_dataset, val_dataset, test_dataset = get_GNSS_data(config)
-        # GNSS-only: no VLBI data needed
+        test_dataset = FusionDataset(test_dataset, SingleVLBIDataset(config, split="test"))
 
     elif config["data"]["mode"] == "Fusion":
         train_vlbi, val_vlbi, test_vlbi = get_VLBI_data(config)
