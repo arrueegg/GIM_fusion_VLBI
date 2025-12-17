@@ -573,6 +573,173 @@ def plot_annual_heatmap(df_yearly_metrics, out_dir='evaluation/annual_visualizat
         plt.close()
 
 
+def extract_daily_biases(experiments_folder):
+    """
+    Extract global bias values from metrics.txt files for each day and method.
+    
+    Returns
+    -------
+    df_biases : pandas.DataFrame
+        Columns: ['year', 'doy', 'method', 'bias']
+    """
+    bias_list = []
+    
+    exp_list = sorted(os.listdir(experiments_folder))
+    exp_list = [m for m in exp_list if extract_key_from_folder(m) in METHOD_MAP]
+    
+    for method_folder in exp_list:
+        # Extract year, doy, and method key
+        match = re.search(r'_(\d{4})_(\d{3})_', method_folder)
+        if not match:
+            continue
+        year = int(match.group(1))
+        doy = int(match.group(2))
+        method_key = extract_key_from_folder(method_folder)
+        if method_key not in METHOD_MAP:
+            continue
+        method_name = METHOD_MAP[method_key]
+        
+        # Read metrics.txt
+        metrics_file = os.path.join(experiments_folder, method_folder, 'SA_plots', 'metrics.txt')
+        if not os.path.exists(metrics_file):
+            continue
+        
+        # Parse global bias from metrics.txt
+        with open(metrics_file, 'r') as f:
+            for line in f:
+                if line.startswith('GLOBAL BIAS:'):
+                    # Extract bias value
+                    bias_str = line.split(':')[1].strip()
+                    if bias_str != 'N/A (no overlapping VLBI vs altimetry)':
+                        try:
+                            bias = float(bias_str)
+                            bias_list.append({
+                                'year': year,
+                                'doy': doy,
+                                'method': method_name,
+                                'bias': bias
+                            })
+                        except ValueError:
+                            pass
+                    break
+    
+    return pd.DataFrame(bias_list)
+
+
+def plot_daily_biases(df_biases):
+    """
+    Create visualizations of daily biases:
+    1. Time series plot showing biases over DOY for each method
+    2. Box plots showing distribution per method
+    3. Summary statistics table
+    """
+    if df_biases.empty:
+        print("No bias data available to plot.")
+        return
+    
+    out_dir = 'evaluation/bias_analysis'
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # Color mapping for methods
+    colors = {
+        'GNSS only': '#1f77b4',
+        'VLBI VTEC': '#ff7f0e', 
+        'VLBI DTEC': '#2ca02c'
+    }
+    
+    # 1. Time series plot
+    fig, ax = plt.subplots(figsize=(14, 6))
+    for method in df_biases['method'].unique():
+        method_data = df_biases[df_biases['method'] == method].sort_values('doy')
+        ax.plot(method_data['doy'], method_data['bias'], 
+                marker='o', label=method, alpha=0.7, linewidth=1.5,
+                color=colors.get(method, None))
+    
+    ax.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    ax.set_xlabel('Day of Year (DOY)', fontsize=12)
+    ax.set_ylabel('Global Bias (TECU)', fontsize=12)
+    ax.set_title('Daily Global Bias: Model Predictions vs Jason-3 Observations', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'daily_bias_timeseries.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # 2. Box plots
+    fig, ax = plt.subplots(figsize=(10, 6))
+    method_order = ['GNSS only', 'VLBI DTEC', 'VLBI VTEC']
+    method_order = [m for m in method_order if m in df_biases['method'].unique()]
+    
+    bp = ax.boxplot([df_biases[df_biases['method'] == m]['bias'].values for m in method_order],
+                     labels=method_order,
+                     patch_artist=True,
+                     showfliers=True,
+                     medianprops=dict(color='red', linewidth=2),
+                     boxprops=dict(facecolor='lightblue', alpha=0.7))
+    
+    for patch, method in zip(bp['boxes'], method_order):
+        patch.set_facecolor(colors.get(method, 'lightblue'))
+    
+    ax.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    ax.set_ylabel('Global Bias (TECU)', fontsize=12)
+    ax.set_title('Distribution of Daily Global Biases by Method', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'daily_bias_boxplot.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # 3. Summary statistics
+    stats_list = []
+    for method in df_biases['method'].unique():
+        method_biases = df_biases[df_biases['method'] == method]['bias']
+        stats_list.append({
+            'Method': method,
+            'Count': len(method_biases),
+            'Mean': round(method_biases.mean(), 3),
+            'Median': round(method_biases.median(), 3),
+            'Std': round(method_biases.std(), 3),
+            'Min': round(method_biases.min(), 3),
+            'Max': round(method_biases.max(), 3),
+            'Range': round(method_biases.max() - method_biases.min(), 3)
+        })
+    
+    df_stats = pd.DataFrame(stats_list)
+    df_stats.to_csv(os.path.join(out_dir, 'bias_statistics.csv'), index=False)
+    
+    # Print summary
+    print("\n" + "="*80)
+    print("DAILY GLOBAL BIAS STATISTICS (TECU)")
+    print("="*80)
+    print(df_stats.to_string(index=False))
+    print("="*80)
+    
+    # 4. Histogram of bias magnitudes
+    fig, axes = plt.subplots(1, len(method_order), figsize=(14, 4), sharey=True)
+    if len(method_order) == 1:
+        axes = [axes]
+    
+    for ax, method in zip(axes, method_order):
+        method_biases = df_biases[df_biases['method'] == method]['bias']
+        ax.hist(method_biases, bins=20, color=colors.get(method, 'lightblue'), 
+                alpha=0.7, edgecolor='black')
+        ax.axvline(x=method_biases.mean(), color='red', linestyle='--', 
+                   linewidth=2, label=f'Mean: {method_biases.mean():.2f}')
+        ax.axvline(x=method_biases.median(), color='orange', linestyle='--', 
+                   linewidth=2, label=f'Median: {method_biases.median():.2f}')
+        ax.set_xlabel('Bias (TECU)', fontsize=10)
+        ax.set_title(method, fontsize=11, fontweight='bold')
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+    
+    axes[0].set_ylabel('Frequency', fontsize=10)
+    fig.suptitle('Distribution of Daily Global Biases', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'daily_bias_histogram.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\nBias analysis plots saved to: {out_dir}/")
+
+
 def main():
     experiments_folder = '/scratch2/arrueegg/WP2/GIM_fusion_VLBI/experiments/'
     df_metrics, df_global_all, df_station_all = collect_metrics(experiments_folder)
@@ -590,7 +757,11 @@ def main():
     print(f"Creating annual heatmaps...")
     plot_annual_heatmap(df_yearly_metrics)
 
-    print("Evaluation completed and saved to 'evaluation/' directory.")
+    print(f"\nExtracting and analyzing daily biases...")
+    df_biases = extract_daily_biases(experiments_folder)
+    plot_daily_biases(df_biases)
+
+    print("\nEvaluation completed and saved to 'evaluation/' directory.")
 
 if __name__ == "__main__":
     main()

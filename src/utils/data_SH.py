@@ -609,6 +609,7 @@ class DTECVLBIDataset(Dataset):
         data = pd.DataFrame()
         if len(data_files) == 0:
             return data
+        
         for path in data_files:
             if not os.path.exists(os.path.join(path, 'Apriori', 'Station.nc')):
                 continue
@@ -646,9 +647,14 @@ class DTECVLBIDataset(Dataset):
             current_data['s2nrX'] = s2nrX
             current_data['s2nrS'] = s2nrS
 
+            # Preprocess each file's data individually
+            current_data = self.preprocess(current_data, Scan2Source, Obs2Scan)
+            
             data = pd.concat([data, current_data], ignore_index=True)
 
-        data = self.preprocess(data, Scan2Source, Obs2Scan)
+        # Handle empty dataframe case
+        if data.empty:
+            return torch.tensor([], dtype=torch.float32).reshape(0, 12)  # 12 columns expected
 
         # add IPP here
         data = self.add_ipp(data)
