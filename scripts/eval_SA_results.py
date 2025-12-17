@@ -648,7 +648,7 @@ def plot_daily_biases(df_biases):
     }
     
     # 1. Time series plot
-    fig, ax = plt.subplots(figsize=(14, 6))
+    fig, ax = plt.subplots(figsize=(14, 5))
     for method in df_biases['method'].unique():
         method_data = df_biases[df_biases['method'] == method].sort_values('doy')
         ax.plot(method_data['doy'], method_data['bias'], 
@@ -666,7 +666,7 @@ def plot_daily_biases(df_biases):
     plt.close()
     
     # 2. Box plots
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 5))
     method_order = ['GNSS only', 'VLBI DTEC', 'VLBI VTEC']
     method_order = [m for m in method_order if m in df_biases['method'].unique()]
     
